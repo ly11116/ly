@@ -15,12 +15,7 @@ struct ContentView: View {
     @FocusState private var inputFocused: Bool
 
     var body: some View {
-        TabView {
-            chatBody
-                .tabItem { Label("聊天", systemImage: "bubble.left.and.bubble.right") }
-            ConsoleWebView()
-                .tabItem { Label("控制台", systemImage: "slider.horizontal.3") }
-        }
+        ConsoleWebView()
     }
 
     var chatBody: some View {
