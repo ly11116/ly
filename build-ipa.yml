@@ -1,0 +1,40 @@
+name: Build IPA
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      
+      - name: Create Xcode Project
+        run: |
+          # 用 xcodegen 或手动创建 project.pbxproj
+          # 这里需要 project.yml 或手动配置
+      
+      - name: Build
+        run: |
+          xcodebuild -scheme ColdCoffee \
+            -configuration Release \
+            -archivePath ColdCoffee.xcarchive \
+            archive
+      
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath ColdCoffee.xcarchive \
+            -exportPath ./ipa \
+            -exportOptionsPlist ExportOptions.plist
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ColdCoffee.ipa
+          path: ipa/ColdCoffee.ipa
