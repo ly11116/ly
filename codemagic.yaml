@@ -23,11 +23,18 @@ workflows:
       - name: Setup toolchain
         script: |
           set -exo pipefail
-          brew install ninja llvm libarchive pkg-config meson go 2>/dev/null || true
+          brew install ninja llvm lld libarchive pkg-config meson go 2>/dev/null || true
           command -v meson || python3 -m pip install --user --break-system-packages meson || python3 -m pip install --user meson
           echo "=== tool versions ==="
           which python3; python3 --version
           which meson ninja go clang
+          # lld 自检: VDSO 用 -fuse-ld=lld 链接 aarch64-linux ELF, ld.lld 必须在场
+          export PATH="/opt/homebrew/opt/lld/bin:/opt/homebrew/opt/llvm/bin:$PATH"
+          command -v ld.lld || { echo "ld.lld MISSING, trying brew install lld"; brew install lld; }
+          command -v ld.lld && ld.lld --version | head -1
+          # 交叉链接探针（与 VDSO 同款调用方式）
+          echo 'void _start(void){}' > /tmp/probe.c
+          /opt/homebrew/opt/llvm/bin/clang -target aarch64-linux-gnu -fuse-ld=lld -nostdlib -shared -fPIC -ffreestanding /tmp/probe.c -o /tmp/probe.elf             && echo "lld cross-link probe OK" || echo "WARN: lld probe failed" 
           echo 'SUBMODULES'
           git submodule update --init --recursive
           test -d deps/ish/asbestos && echo "deps/ish OK"
@@ -46,8 +53,11 @@ workflows:
         script: |
           set -exo pipefail
           export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.12/bin:$HOME/Library/Python/3.13/bin:$PATH"
+          export PATH="/opt/homebrew/opt/lld/bin:$PATH"
+          command -v ld.lld || { echo "ld.lld missing!"; brew install lld 2>/dev/null; }
           echo "python3: $(which python3) $(python3 --version 2>&1)"
           echo "meson: $(which meson || echo MISSING)"
+          true
           # 换健壮版 staticdefine.sh（原版死板砍尾9token，clang flag 变多就砍错）
           cp deps/patches/staticdefine-fix.sh deps/ish/tools/staticdefine.sh
           chmod +x deps/ish/tools/staticdefine.sh
