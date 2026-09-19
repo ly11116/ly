@@ -13,32 +13,44 @@ workflows:
       - name: Setup toolchain
         script: |
           set -ex
-          brew install ninja llvm libarchive pkg-config || brew upgrade ninja llvm libarchive pkg-config
-          pip3 install --user meson
+          brew install ninja llvm libarchive pkg-config meson 2>/dev/null || brew upgrade meson || \
+            { python3 -m pip install --user --break-system-packages meson || python3 -m pip install --user meson; }
+          echo "=== tool versions ==="
+          which python3; python3 --version
+          ls "$HOME/Library/Python/" 2>/dev/null || true
           echo 'SUBMODULES'
           git submodule update --init --recursive
+          test -d deps/ish/asbestos && echo "deps/ish OK"
           cp src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$PATH"
-          echo "export CM_BUILD_PATH=\"$PATH\"" >> /tmp/env.sh
       - name: Build native deps (lame)
         script: |
           set -ex
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$PATH"
+          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.13/bin:$PATH"
           ./deps/build_lame.sh
       - name: Build native deps (ffmpeg)
         script: |
           set -ex
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$PATH"
+          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.13/bin:$PATH"
           ./deps/build_ffmpeg.sh
       - name: Build native deps (ish kernel)
         script: |
-          set -ex
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$PATH"
-          ./deps/build_ish.sh
+          set -e
+          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$HOME/Library/Python/3.13/bin:$PATH"
+          echo "python3: $(which python3) $(python3 --version 2>&1)"
+          echo "meson: $(which meson || echo MISSING)"
+          sed -i '' 's/ninja -C /ninja -v -C /g' deps/build_ish.sh
+          sed -i '' '2iset -x' deps/ish/tools/staticdefine.sh
+          LOG=/tmp/ish_build.log
+          if ! ./deps/build_ish.sh 2>&1 | tee "$LOG"; then
+            echo "##### ISH BUILD FAILED — grep FAILED/error 上下文 #####"
+            grep -n -B8 -A20 -iE "FAILED|error:|traceback|command not found" "$LOG" | tail -80
+            echo "##### 原始末尾 40 行 #####"
+            tail -40 "$LOG"
+            exit 1
+          fi
       - name: Prepare alpine rootfs
         script: |
           set -ex
-          export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/bin:$HOME/Library/Python/3.9/bin:$HOME/Library/Python/3.11/bin:$PATH"
           ./deps/prepare_alpine_rootfs.sh
       - name: Build unsigned IPA
         script: |
