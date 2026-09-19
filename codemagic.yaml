@@ -39,7 +39,9 @@ workflows:
           echo "python3: $(which python3) $(python3 --version 2>&1)"
           echo "meson: $(which meson || echo MISSING)"
           sed -i '' 's/ninja -C /ninja -v -C /g' deps/build_ish.sh
-          sed -i '' '2iset -x' deps/ish/tools/staticdefine.sh
+          # staticdefine.sh 加 set -x trace（BSD sed 不认 GNU 的 2i，用 head/tail 拼）
+          SD=deps/ish/tools/staticdefine.sh
+          { head -1 "$SD"; echo "set -x"; tail -n +2 "$SD"; } > "$SD.new" && mv "$SD.new" "$SD" && chmod +x "$SD"
           LOG=/tmp/ish_build.log
           if ! ./deps/build_ish.sh 2>&1 | tee "$LOG"; then
             echo "##### ISH BUILD FAILED — grep FAILED/error 上下文 #####"
