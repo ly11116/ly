@@ -132,6 +132,18 @@ extension AIChatViewModel {
             ),
         ]
 
+        tools.append(AgentToolDefinition(
+            name: "ly_executor",
+            description: "Run a structured multi-step task on the user's own rootless-jailbreak iPad executor at localhost. Only use for explicitly requested device maintenance or diagnostics. The executor enforces its own command allowlist, timeout, stop-on-error behavior, and audit log.",
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of this device task."),
+                "steps": AgentToolParam(type: .string, description: "JSON array string of ordered steps, for example [{\"command\":\"uname -a\"}]. Each item may contain cwd and timeout."),
+                "stop_on_error": AgentToolParam(type: .boolean, description: "Stop after the first failed step (default true)."),
+            ],
+            required: ["tool_title", "steps"],
+            propertyOrdering: ["tool_title", "steps", "stop_on_error"]
+        ))
+
         if includeMemoryTools {
             tools.append(AgentToolDefinition(
                 name: "memory_write",
