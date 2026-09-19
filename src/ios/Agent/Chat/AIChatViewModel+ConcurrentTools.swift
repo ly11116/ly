@@ -484,6 +484,40 @@ extension AIChatViewModel {
             }
             toolOutput = redactedOut
 
+        case "ly_executor":
+            guard let stepsJSON = toolArgs["steps"] as? String,
+                  let stepsData = stepsJSON.data(using: .utf8),
+                  let steps = try? JSONSerialization.jsonObject(with: stepsData) as? [[String: Any]],
+                  !steps.isEmpty else {
+                toolOutput = "Error: `steps` must be a non-empty JSON array string."
+                toolSuccess = false
+                break
+            }
+            let payload: [String: Any] = [
+                "stop_on_error": (toolArgs["stop_on_error"] as? Bool) ?? true,
+                "steps": steps
+            ]
+            guard JSONSerialization.isValidJSONObject(payload),
+                  let body = try? JSONSerialization.data(withJSONObject: payload) else {
+                toolOutput = "Error: invalid executor task JSON."
+                toolSuccess = false
+                break
+            }
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:8765/v1/task")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 125
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                toolOutput = String(data: data, encoding: .utf8) ?? "Executor returned non-text data"
+                toolSuccess = (200..<300).contains(status)
+            } catch {
+                toolOutput = "ly executor unavailable at 127.0.0.1:8765: \(error.localizedDescription)"
+                toolSuccess = false
+            }
+
         case "file_read":
             let fileResult: FileToolResult
             do {
