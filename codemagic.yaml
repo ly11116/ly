@@ -60,6 +60,19 @@ workflows:
           which go && go version
           ./deps/build_rclone_ios.sh
           ls -la deps/frameworks/Rclone.xcframework
+      - name: Verify & patch resources before IPA
+        script: |
+          set -ex
+          ls -la deps/resources deps/frameworks 2>&1 | head -20
+          # RootfsPatch.bundle 兜底（ish 脚本条件复制静默跳过时补上）
+          if [ ! -d deps/resources/RootfsPatch.bundle ]; then
+            cp -R deps/ish/app/RootfsPatch.bundle deps/resources/
+            echo "RootfsPatch.bundle fallback copied"
+          fi
+          # 关键产物断言，缺一个直接在此步报错（比 Xcode 65 好读）
+          test -d deps/resources/RootfsPatch.bundle && echo "RootfsPatch OK"
+          ls deps/resources/alpine-rootfs.zip && echo "rootfs zip OK"
+          ls deps/frameworks/Rclone.xcframework && echo "Rclone OK"
       - name: Build unsigned IPA
         script: |
           set -ex
