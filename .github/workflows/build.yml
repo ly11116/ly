@@ -1,0 +1,90 @@
+name: Build ly minis unsigned IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          sudo xcode-select -s /Applications/Xcode_16.4.app || \
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      - name: Verify source baseline
+        run: |
+          set -euxo pipefail
+          git rev-parse HEAD
+          grep -n 'IPHONEOS_DEPLOYMENT_TARGET' src/ios/Minis.xcodeproj/project.pbxproj | head
+          grep -RIn 'ly_executor' src/ios/Agent/Chat | head
+
+      - name: Build native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find deps scripts -maxdepth 2 -type f -name '*.sh' 2>/dev/null | head -30 || true
+          for s in deps/build_ish.sh deps/build_ffmpeg.sh deps/build_lame.sh deps/build_rclone_ios.sh deps/prepare_alpine_rootfs.sh; do
+            if [ -f "$s" ]; then
+              bash "$s" || echo "WARN: $s failed (continuing)"
+            fi
+          done
+          find deps -maxdepth 3 -type d -name '*.xcframework' -print 2>/dev/null || true
+          test -d deps/frameworks/Rclone.xcframework || echo "WARN: Rclone.xcframework missing"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project src/ios/Minis.xcodeproj \
+            -scheme Minis || true
+
+      - name: Archive unsigned
+        run: |
+          set -euxo pipefail
+          cd src/ios
+          xcodebuild \
+            -project Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -archivePath build/Minis.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee archive.log
+          test -d build/Minis.xcarchive/Products/Applications/Minis.app
+
+      - name: Package unsigned IPA
+        run: |
+          set -euxo pipefail
+          cd src/ios
+          mkdir -p build/payload
+          cp -R build/Minis.xcarchive/Products/Applications/*.app build/payload/
+          mkdir -p build/unsigned
+          cd build
+          zip -qry unsigned/ly-minis-unsigned.ipa payload
+          ls -la unsigned/
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ly-minis-unsigned-ipa
+          path: src/ios/build/unsigned/ly-minis-unsigned.ipa
+          retention-days: 7
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log-${{ github.run_number }}
+          path: src/ios/archive.log
+          retention-days: 7
+          if-no-files-found: ignore
