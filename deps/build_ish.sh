@@ -72,9 +72,20 @@ check_prerequisites() {
         log_error "Python 3 is required. Install with: brew install python3"
     fi
 
-    # Check for meson
+    # Check for meson (auto-install if missing: brew first, then pip with/without break-system-packages)
     if ! command -v meson &> /dev/null; then
-        log_error "Meson is required. Install with: pip3 install meson"
+        log_info "Meson not found, attempting auto-install..."
+        if command -v brew &> /dev/null; then
+            brew install meson 2>/dev/null || true
+        fi
+        if ! command -v meson &> /dev/null; then
+            pip3 install --break-system-packages meson 2>/dev/null || pip3 install meson 2>/dev/null || true
+        fi
+        if ! command -v meson &> /dev/null; then
+            log_error "Meson is required. Install with: pip3 install meson"
+        else
+            log_info "Meson auto-installed successfully."
+        fi
     fi
 
     # Check for ninja
