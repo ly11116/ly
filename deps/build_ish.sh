@@ -114,6 +114,21 @@ check_prerequisites() {
         log_info "Found LLVM Clang: $LLVM_CLANG"
     fi
 
+    # CI fix: brew llvm's clang sometimes rejects '-fuse-ld=lld' (name lookup
+    # fails while ld64.lld binary exists). Install matching lld and, if the
+    # absolute linker binary exists, patch the vdso cross-file/meson to use it.
+    if [ -x "$LLVM_CLANG" ]; then
+        LLVM_BIN_DIR="$(dirname "$LLVM_CLANG")"
+        if [ -x "$LLVM_BIN_DIR/ld64.lld" ] && ! "$LLVM_CLANG" -fuse-ld=lld -x c -c /dev/null -o /dev/null 2>/dev/null; then
+            log_info "clang rejects -fuse-ld=lld; patching meson to use absolute ld64.lld path"
+            VDSO_MB="$ROOT/deps/ish/vdso/arm64/meson.build"
+            if [ -f "$VDSO_MB" ] && grep -q "'-fuse-ld=lld'" "$VDSO_MB"; then
+                sed -i.bak "s#'-fuse-ld=lld'#'-fuse-ld=$LLVM_BIN_DIR/ld64.lld'#" "$VDSO_MB"
+                log_info "patched: $VDSO_MB"
+            fi
+        fi
+    fi
+
     log_success "Prerequisites check passed"
 }
 
