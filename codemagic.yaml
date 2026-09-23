@@ -1,0 +1,54 @@
+name: ly-minis-unsigned-ipa
+
+scripts:
+  - name: Checkout submodules
+    script: |
+      set -euxo pipefail
+      git submodule update --init --recursive || echo "no submodules"
+
+  - name: Verify source baseline
+    script: |
+      set -euxo pipefail
+      git rev-parse HEAD
+      grep -n 'IPHONEOS_DEPLOYMENT_TARGET' src/ios/Minis.xcodeproj/project.pbxproj | head
+
+  - name: Build native dependencies
+    script: |
+      set -euxo pipefail
+      find deps scripts -maxdepth 2 -type f -name '*.sh' | head -30
+      for s in deps/build_ish.sh deps/build_ffmpeg.sh deps/build_lame.sh deps/build_rclone_ios.sh deps/prepare_alpine_rootfs.sh; do
+        [ -f "$s" ] && (bash "$s" || echo "WARN: $s failed") || true
+      done
+      find deps -maxdepth 3 -type d -name '*.xcframework' -print || true
+
+  - name: Resolve Swift packages
+    script: |
+      xcodebuild -resolvePackageDependencies -project src/ios/Minis.xcodeproj -scheme Minis || true
+
+  - name: Archive unsigned
+    script: |
+      set -euxo pipefail
+      cd src/ios
+      xcodebuild \
+        -project Minis.xcodeproj \
+        -scheme Minis \
+        -configuration Release \
+        -destination generic/platform=iOS \
+        -archivePath build/Minis.xcarchive \
+        archive \
+        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGNING_REQUIRED=NO
+      test -d build/Minis.xcarchive/Products/Applications/Minis.app
+
+  - name: Package unsigned IPA
+    script: |
+      set -euxo pipefail
+      cd src/ios
+      mkdir -p build/payload
+      cp -R build/Minis.xcarchive/Products/Applications/*.app build/payload/
+      mkdir -p build/unsigned
+      cd build && zip -qry unsigned/ly-minis-unsigned.ipa payload
+      ls -la unsigned/
+
+artifacts:
+  - path: src/ios/build/unsigned/ly-minis-unsigned.ipa

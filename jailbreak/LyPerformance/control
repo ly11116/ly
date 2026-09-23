@@ -1,0 +1,10 @@
+Package: com.ly.minis.lyperformance
+Name: ly minis Performance
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: Conservative memory-pressure and thermal monitor for ly minis
+Maintainer: ly
+Author: ly
+Section: Tweaks
+Priority: optional
+Depends: mobilesubstrate

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.ly.executor</string>
+<key>ProgramArguments</key><array><string>/var/jb/usr/bin/python3</string><string>/var/jb/usr/local/bin/ly-executor.py</string></array>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>EnvironmentVariables</key><dict><key>LY_EXECUTOR_PORT</key><string>8765</string></dict>
+<key>StandardOutPath</key><string>/var/mobile/Library/Logs/ly-executor.out</string>
+<key>StandardErrorPath</key><string>/var/mobile/Library/Logs/ly-executor.err</string>
+</dict></plist>

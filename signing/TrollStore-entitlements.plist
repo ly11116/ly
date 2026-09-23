@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- JIT / 动态代码 -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+
+	<!-- 调试 / task_for_pid：只对 debuggable(TrollStore 自装)进程有效 -->
+	<key>get-task-allow</key>
+	<true/>
+	<key>task_for_pid-allow</key>
+	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+
+	<!-- 沙箱缓解：iOS 16 stock 上部分生效，不保证完整去沙箱 -->
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.private.security.no-container</key>
+	<true/>
+
+	<!-- 网络扩展：全流量镜像(SOCKS5 mirror / NE tunnel) -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+		<string>app-proxy-provider</string>
+	</array>
+	<key>com.apple.developer.networking.vpn-api</key>
+	<true/>
+
+	<!-- 文件访问面 -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.assets.movies.read-write</key>
+	<true/>
+	<key>com.apple.security.assets.music.read-write</key>
+	<true/>
+
+	<!-- 后台保活(尽量让 executor/隧道活久点) -->
+	<key>com.apple.background-networking</key>
+	<true/>
+	<key>com.apple.developer.background-mode.audio</key>
+	<true/>
+</dict>
+</plist>
