@@ -16,12 +16,21 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Select Xcode
+      # 目标设备是 iOS 16.6.1，部署目标 16.0 —— 必须固定 Xcode 16.4。
+      # 用 latest 会拉到 Xcode 26.x + iOS 26 SDK，与 iOS 16 运行时差异过大。
+      - name: Select Xcode 16.4
         run: |
+          set -euxo pipefail
           ls -d /Applications/Xcode*.app || true
-          sudo xcode-select -s /Applications/Xcode_16.4.app || \
-          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          if [ -d /Applications/Xcode_16.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          else
+            echo "FATAL: 本 runner 上没有 Xcode 16.4，可用版本："
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
           xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos
 
       - name: Prepare xcconfig
         run: |

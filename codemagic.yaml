@@ -5,7 +5,10 @@ workflows:
     max_build_duration: 120
 
     environment:
-      xcode: latest
+      # 必须固定 Xcode —— 目标设备是 iOS 16.6.1，部署目标 16.0。
+      # 用 `latest` 会拉到 Xcode 26.x + iOS 26 SDK，与 iOS 16 运行时差异过大
+      # （可用性检查、SDK 行为都可能出问题）。16.4 是上游验证过的版本。
+      xcode: 16.4
       cocoapods: default
       vars:
         # iSH 静态库必须链接，否则 shell 与全部 apple-* 工具都不可用
