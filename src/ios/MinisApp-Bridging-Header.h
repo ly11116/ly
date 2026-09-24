@@ -70,4 +70,9 @@
 #endif /* MinisApp_Bridging_Header_h */
 
 // rclone static library (deps/frameworks/Rclone.xcframework) — see RcloneBridge.swift
+// [ly-ios16] NO_RCLONE: the static Go runtime inside librclone.a breaks at
+// launch on iOS 16 (Go mheap mapping + pmap_enter failure → SIGTRAP 0.04s in).
+// RcloneBridge.swift provides a Swift stub instead.
+#ifndef NO_RCLONE
 #import "librclone.h"
+#endif

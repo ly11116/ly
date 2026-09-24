@@ -1238,7 +1238,6 @@
 			files = (
 				AA9C2BF92F65996900F41633 /* SwiftMath in Frameworks */,
 				AAF00F012F50A00000049557 /* FFmpeg.framework in Frameworks */,
-				RCL000010 /* Rclone.xcframework in Frameworks */,
 				AAF10F012F50A00000049557 /* libavcodec.framework in Frameworks */,
 				AAF10F032F50A00000049557 /* libavformat.framework in Frameworks */,
 				AAF10F062F50A00000049557 /* libavutil.framework in Frameworks */,
@@ -3517,7 +3516,7 @@
 					"-lish",
 					"-lfakefs",
 				);
-				OTHER_SWIFT_FLAGS = "";
+				OTHER_SWIFT_FLAGS = "-D NO_RCLONE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -16,6 +16,13 @@ private let logger = AppLogger(category: "Rclone")
 /// Backends linked in are decided by deps/rclone-mobile/backends/backends.go
 /// (10 of rclone's 70), which is also what keeps the binary at ~15.7 MB gz
 /// instead of ~25.6 MB.
+///
+/// [ly-ios16] NO_RCLONE build: the librclone Go runtime breaks at launch on
+/// iOS 16 (mheap mapping → pmap_enter resource failure → SIGTRAP within
+/// 0.04s). When NO_RCLONE is set, this whole enum is replaced by a stub that
+/// fails every RPC with a clear "unsupported in this build" error, and the
+/// main binary contains no Go code. Backup-to-remote features degrade
+/// gracefully; local backups, iSH, chat, tools are unaffected.
 enum RcloneBridge {
 
     /// rclone's RPC returns an HTTP-style status; anything but 200 is a failure.
@@ -32,6 +39,47 @@ enum RcloneBridge {
             return "rclone RPC failed (status \(status))"
         }
     }
+
+    #if NO_RCLONE
+
+    // MARK: - Stub implementation (iOS 16 compatibility build)
+
+    private static let unavailable = RPCError(
+        status: -1,
+        payload: ""
+    )
+
+    static func initializeIfNeeded() {
+        // No Go runtime to start.
+    }
+
+    static func applyGlobalOptions() {
+        // No-op: no rclone runtime.
+    }
+
+    /// How long to wait for a server to accept a connection. (Unused in stub.)
+    static let connectTimeout: TimeInterval = 20
+    /// How long a single transfer may stall before it is treated as dead. (Unused in stub.)
+    static let ioTimeout: TimeInterval = 45
+
+    static func setInsecureTLS(_ allow: Bool) {
+        // No-op: no rclone runtime.
+    }
+
+    @discardableResult
+    static func rpc(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+        throw unavailable
+    }
+
+    static func smokeTest() -> String {
+        "rclone disabled in this iOS 16 compatibility build"
+    }
+
+    static func supportedBackends() -> [String] {
+        []
+    }
+
+    #else
 
     private static var initialised = false
 
@@ -187,4 +235,6 @@ enum RcloneBridge {
               let providers = out["providers"] as? [[String: Any]] else { return [] }
         return providers.compactMap { $0["Name"] as? String }.sorted()
     }
+
+    #endif
 }

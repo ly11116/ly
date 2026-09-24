@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+
+# [ly-ios16] NO_RCLONE builds skip this entirely — the Go runtime breaks at
+# launch on iOS 16 (see RcloneBridge.swift). Set LY_SKIP_RCLONE=1 to skip.
+if [ "${LY_BUILD_RCLONE:-0}" != "1" ]; then
+  echo "==> default: skipping rclone build (NO_RCLONE app build; set LY_BUILD_RCLONE=1 to build it)"
+  exit 0
+fi
 # Build rclone as a static library for iOS and package it as an XCFramework.
 #
 # Produces deps/frameworks/Rclone.xcframework with two slices:
