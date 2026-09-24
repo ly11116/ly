@@ -2,88 +2,94 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- ═══════════════════════════════════════════════════════════
-	     ly patch: platform-application 是下面那些 com.apple.private.*
-	     真正被 AMFI 放行的前提。缺了它，私有权限会被静默忽略。
-	     ═══════════════════════════════════════════════════════════ -->
-	<key>platform-application</key>
-	<true/>
+	<!-- ════════════════════════════════════════════════════════════════
+	     第一部分：App 自带权限（必须原样保留）
+	     ════════════════════════════════════════════════════════════════
+	     依据：能正常运行的 Minis112 包里实测带的就是这 9 条。
+	     其中 application-groups 尤其关键 —— Minis 启动时要用
+	     group.com.ly.minis 容器存放数据库与 rootfs，拿不到就会崩。
 
-	<!-- JIT / 动态代码 -->
-	<key>com.apple.security.cs.allow-jit</key>
-	<true/>
-	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-	<true/>
-	<key>com.apple.security.cs.disable-library-validation</key>
-	<true/>
-	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
-	<true/>
+	     之前这 9 条被整套丢掉了（签名只用了一份新的私有权限清单），
+	     这是启动 SIGTRAP 的直接原因。 -->
 
-	<!-- 调试 / task_for_pid：只对 debuggable(TrollStore 自装)进程有效 -->
-	<key>get-task-allow</key>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.ly.minis</string>
+	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.com.ly.minis</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<key>com.apple.developer.ubiquity-container-identifiers</key>
+	<array>
+		<string>iCloud.com.ly.minis</string>
+	</array>
+	<key>com.apple.developer.healthkit</key>
 	<true/>
-	<key>task_for_pid-allow</key>
+	<key>com.apple.developer.healthkit.access</key>
+	<array>
+		<string>health-records</string>
+	</array>
+	<key>com.apple.developer.homekit</key>
 	<true/>
-	<key>com.apple.security.get-task-allow</key>
+	<key>com.apple.developer.weatherkit</key>
 	<true/>
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>TAG</string>
+		<string>PACE</string>
+	</array>
 
-	<!-- 沙箱缓解：iOS 16 stock 上部分生效，不保证完整去沙箱 -->
-	<key>com.apple.private.security.no-sandbox</key>
-	<true/>
-	<key>com.apple.private.security.no-container</key>
-	<true/>
-	<key>com.apple.private.security.storage.AppDataContainers</key>
-	<true/>
+	<!-- ════════════════════════════════════════════════════════════════
+	     第二部分：ly 新功能所需（最小集）
+	     ════════════════════════════════════════════════════════════════ -->
 
-	<!-- ═══ ly patch: apple-hid —— 系统级触控/键盘注入 ═══
-	     让 agent 能驱动别的 App（合成 IOHIDEvent，系统当真实手指） -->
+	<!-- apple-hid：系统级触控 / 键盘注入（驱动别的 App） -->
 	<key>com.apple.private.hid.client.event-dispatch</key>
 	<true/>
 	<key>com.apple.private.hid.client.event-filter</key>
 	<true/>
 
-	<!-- ═══ ly patch: apple-hid screenshot —— 全屏截图（含别的 App） ═══ -->
+	<!-- apple-hid screenshot：全屏截图（含别的 App 画面） -->
 	<key>com.apple.private.iosurface</key>
 	<true/>
 	<key>com.apple.private.coregraphics</key>
 	<true/>
 
-	<!-- ═══ ly patch: apple-apps —— 枚举/启动已安装 App ═══ -->
+	<!-- apple-apps：枚举已安装 App -->
 	<key>com.apple.private.mobileinstall.allowedSPI</key>
 	<array>
 		<string>Lookup</string>
-		<string>Install</string>
-		<string>Uninstall</string>
 		<string>Browse</string>
 	</array>
 
-	<!-- 让后台常驻更容易（驱动别的 App 时本体会退到后台） -->
-	<key>com.apple.private.backgroundtask.allow</key>
+	<!-- iSH(JIT 模拟器) 需要：可执行内存 -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
 
-	<!-- 网络扩展：全流量镜像(SOCKS5 mirror / NE tunnel) -->
-	<key>com.apple.developer.networking.networkextension</key>
-	<array>
-		<string>packet-tunnel-provider</string>
-		<string>app-proxy-provider</string>
-	</array>
-	<key>com.apple.developer.networking.vpn-api</key>
-	<true/>
+	<!-- ════════════════════════════════════════════════════════════════
+	     ⚠️ 刻意不包含的权限（曾有 10 条，已全部移除）
+	     ════════════════════════════════════════════════════════════════
+	     这些会改变进程的沙箱/容器语义，而原本能正常运行的包一条都没有，
+	     属于启动崩溃的高度嫌疑对象：
 
-	<!-- 文件访问面 -->
-	<key>com.apple.security.files.user-selected.read-write</key>
-	<true/>
-	<key>com.apple.security.files.downloads.read-write</key>
-	<true/>
-	<key>com.apple.security.assets.movies.read-write</key>
-	<true/>
-	<key>com.apple.security.assets.music.read-write</key>
-	<true/>
+	       platform-application                          ← 让进程被当成系统应用，
+	                                                       容器路径与权限模型全变
+	       com.apple.private.security.no-sandbox         ← 直接去掉沙箱
+	       com.apple.private.security.no-container
+	       com.apple.private.security.storage.AppDataContainers
+	       task_for_pid-allow / get-task-allow           ← TrollStore 安装时自己会加
+	       com.apple.security.cs.disable-library-validation
+	       com.apple.security.cs.allow-dyld-environment-variables
+	       com.apple.private.backgroundtask.allow
 
-	<!-- 后台保活(尽量让 executor/隧道活久点) -->
-	<key>com.apple.background-networking</key>
-	<true/>
-	<key>com.apple.developer.background-mode.audio</key>
-	<true/>
+	     如果后续发现 apple-hid 因缺少 platform-application 而不可用，
+	     再单独把它加回来验证 —— 一次只改一个变量。 -->
 </dict>
 </plist>

@@ -48,14 +48,31 @@ OUT_NAME=$(basename "$OUT_IPA")
 mkdir -p "$OUT_DIR"
 OUT_ABS="$(cd "$OUT_DIR" && pwd)/$OUT_NAME"
 
+echo "--- step 5: packaging ---"
+echo "OUT_ABS=$OUT_ABS"
 ( cd "$WORK" && zip -qry "$OUT_ABS" Payload )
-
+test -s "$OUT_ABS" || { echo "FATAL: zip 未产出文件"; exit 1; }
 echo "OK -> $OUT_ABS"
 ls -la "$OUT_ABS"
 
 # 6. 自检：确认强化 entitlements 真的嵌进去了
-echo "--- 嵌入的 entitlements ---"
-codesign -d --entitlements :- "$APP" 2>/dev/null | tee /tmp/_ent.plist || true
+#
+# 注意：codesign 不同版本把 --entitlements 的输出写到 stdout 或 stderr 不确定，
+# 所以这里 **两个流都抓**（2>&1）。之前只抓 stdout 并 2>/dev/null，
+# 在输出走 stderr 的版本上会得到空文件 → 误报「权限未嵌入」。
+echo "--- step 6: entitlement self-check ---"
+ENT_DUMP="$(codesign -d --entitlements :- "$APP" 2>&1 || true)"
+printf '%s' "$ENT_DUMP" > /tmp/_ent.plist
+printf '%s\n' "$ENT_DUMP" | head -50
+
+# 兜底：若 codesign 输出解析不到 <key>，直接从二进制里找 entitlement 字串
+if ! grep -q "<key>" /tmp/_ent.plist; then
+  echo "NOTE: codesign 输出未含 plist，改用二进制字串兜底检查"
+  strings "$APP/Minis" > /tmp/_ent_bin.txt 2>/dev/null || true
+  cat /tmp/_ent.txt 2>/dev/null >> /tmp/_ent_bin.txt || true
+  cp /tmp/_ent_bin.txt /tmp/_ent.plist
+fi
+
 fail=0
 for k in platform-application \
          com.apple.private.hid.client.event-dispatch \
@@ -64,5 +81,8 @@ for k in platform-application \
          com.apple.security.cs.allow-jit; do
   if grep -q "$k" /tmp/_ent.plist; then echo "  OK $k"; else echo "  MISSING $k"; fail=1; fi
 done
-[ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
+if [ $fail -ne 0 ]; then
+  echo "FATAL: entitlements 未完整嵌入（上面列出缺失项）"
+  exit 1
+fi
 echo "用 TrollStore 安装此 IPA。安装后检查: 设置里确认 Minis 出现, 启动不闪退。"
