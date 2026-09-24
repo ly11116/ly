@@ -674,6 +674,8 @@ static void handle_process_exit(struct task *task, int code) {
     weather_offload_register();
     vision_offload_register();
     open_offload_register();
+    apps_offload_register();   // ly patch: apple-apps (list / launch installed apps)
+    hid_offload_register();    // ly patch: apple-hid  (touch injection / screenshot)
     clipboard_offload_register();
     healthkit_offload_register();
     photos_offload_register();

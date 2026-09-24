@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- ═══════════════════════════════════════════════════════════
+	     ly patch: platform-application 是下面那些 com.apple.private.*
+	     真正被 AMFI 放行的前提。缺了它，私有权限会被静默忽略。
+	     ═══════════════════════════════════════════════════════════ -->
+	<key>platform-application</key>
+	<true/>
+
 	<!-- JIT / 动态代码 -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
@@ -24,6 +31,34 @@
 	<key>com.apple.private.security.no-sandbox</key>
 	<true/>
 	<key>com.apple.private.security.no-container</key>
+	<true/>
+	<key>com.apple.private.security.storage.AppDataContainers</key>
+	<true/>
+
+	<!-- ═══ ly patch: apple-hid —— 系统级触控/键盘注入 ═══
+	     让 agent 能驱动别的 App（合成 IOHIDEvent，系统当真实手指） -->
+	<key>com.apple.private.hid.client.event-dispatch</key>
+	<true/>
+	<key>com.apple.private.hid.client.event-filter</key>
+	<true/>
+
+	<!-- ═══ ly patch: apple-hid screenshot —— 全屏截图（含别的 App） ═══ -->
+	<key>com.apple.private.iosurface</key>
+	<true/>
+	<key>com.apple.private.coregraphics</key>
+	<true/>
+
+	<!-- ═══ ly patch: apple-apps —— 枚举/启动已安装 App ═══ -->
+	<key>com.apple.private.mobileinstall.allowedSPI</key>
+	<array>
+		<string>Lookup</string>
+		<string>Install</string>
+		<string>Uninstall</string>
+		<string>Browse</string>
+	</array>
+
+	<!-- 让后台常驻更容易（驱动别的 App 时本体会退到后台） -->
+	<key>com.apple.private.backgroundtask.allow</key>
 	<true/>
 
 	<!-- 网络扩展：全流量镜像(SOCKS5 mirror / NE tunnel) -->

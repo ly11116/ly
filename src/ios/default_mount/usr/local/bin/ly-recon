@@ -1,0 +1,228 @@
+#!/bin/sh
+# ============================================================================
+# ly-recon — Minis rootfs 逆向工具链（二改注入，每次启动由 default_mount 叠加）
+#
+# 用途：给 agent 的 shell 一个开箱可用的逆向/取证环境。
+#       首次调用会在后台把工具装进 Alpine rootfs（需要网络，装完持久）。
+#
+# 用法：
+#   ly-recon status          看装了哪些
+#   ly-recon install         手动触发安装 / 补装
+#   ly-recon hex <file>      十六进制转储（offset + ascii）
+#   ly-recon strings <file>  抽可读串并标注文件偏移
+#   ly-recon info <file>     文件类型 / 熵 / 魔数
+#   ly-recon elf <file>      ELF 头部 + 段表
+#   ly-recon macho <file>    Mach-O 头 + load commands（含 cryptid）
+#   ly-recon apk <file>      APK/IPA 结构概览
+#   ly-recon entropy <file>  分块熵曲线（判断加壳/加密）
+#   ly-recon xor <file>      单字节 XOR 爆破（找明文）
+#   ly-recon carve <file>    常见文件头雕刻（png/jpg/pdf/zip/...）
+# ============================================================================
+set -e
+MARK=/root/.ly-recon-installed
+PIP=${PIP:-pip3}
+
+need() { command -v "$1" >/dev/null 2>&1; }
+
+ly_recon_install() {
+  echo "[ly-recon] 安装工具链（需要网络，首次约 1-3 分钟）..."
+  # Alpine 原生包优先（musl/aarch64 有预编译）
+  apk add --no-cache \
+    python3 py3-pip \
+    binutils file xxd hexdump \
+    coreutils findutils grep sed gawk \
+    tar gzip unzip zip xz bzip2 \
+    openssl \
+    capstone-dev py3-capstone 2>/dev/null || true
+  # 纯 Python 工具（musl 下可用的）
+  $PIP install --break-system-packages -q \
+    pyelftools macholib 2>/dev/null || true
+  # 可选重型工具：装得上就装
+  apk add --no-cache radare2 2>/dev/null && echo "  + radare2" || echo "  - radare2 不可用（跳过）"
+  apk add --no-cache gdb 2>/dev/null && echo "  + gdb" || echo "  - gdb 不可用（跳过）"
+  apk add --no-cache tcpdump 2>/dev/null && echo "  + tcpdump" || echo "  - tcpdump 不可用（跳过）"
+  date > "$MARK"
+  echo "[ly-recon] 完成。"
+}
+
+ly_recon_status() {
+  printf '%-14s %s\n' "python3" "$(command -v python3 || echo '-')"
+  for t in readelf objdump nm strings file xxd hexdump openssl r2 radare2 gdb tcpdump sqlite3 ffmpeg; do
+    printf '%-14s %s\n' "$t" "$(command -v $t || echo '-')"
+  done
+  python3 -c "import elftools;print('%-14s %s'%('pyelftools',elftools.__file__))" 2>/dev/null || printf '%-14s %s\n' pyelftools -
+  python3 -c "import capstone;print('%-14s %s'%('capstone',capstone.__version__))" 2>/dev/null || printf '%-14s %s\n' capstone -
+  python3 -c "import macholib;print('%-14s ok'%'macholib')" 2>/dev/null || printf '%-14s %s\n' macholib -
+  [ -f "$MARK" ] && echo "installed: $(cat $MARK)" || echo "installed: 未安装（跑 ly-recon install）"
+}
+
+# ── 下面这些用 python3 实现，避免依赖不一定存在的工具 ──
+
+case "${1:-status}" in
+  status)  ly_recon_status ;;
+  install) ly_recon_install ;;
+
+  hex)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon hex <file> [maxbytes]"; exit 1; }
+    python3 - "$f" "${3:-4096}" <<'PY'
+import sys
+p, n = sys.argv[1], int(sys.argv[2])
+d = open(p,'rb').read(n)
+for o in range(0, len(d), 16):
+    row = d[o:o+16]
+    hx = ' '.join('%02x' % b for b in row)
+    asc = ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)
+    print('%08x  %-47s  |%s|' % (o, hx, asc))
+PY
+    ;;
+
+  strings)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon strings <file> [minlen]"; exit 1; }
+    python3 - "$f" "${3:-6}" <<'PY'
+import sys, re
+p, ml = sys.argv[1], int(sys.argv[2])
+d = open(p,'rb').read()
+for m in re.finditer(rb'[\x20-\x7e]{%d,}' % ml, d):
+    print('%08x  %s' % (m.start(), m.group().decode('ascii','ignore')[:200]))
+PY
+    ;;
+
+  info)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon info <file>"; exit 1; }
+    file "$f" 2>/dev/null || true
+    python3 - "$f" <<'PY'
+import sys, math, collections
+p = sys.argv[1]
+d = open(p,'rb').read()
+print("size    : %d bytes (%.2f MB)" % (len(d), len(d)/1048576))
+print("magic   : %s" % d[:16].hex())
+c = collections.Counter(d[:200000])
+ent = -sum((v/len(d[:200000]))*math.log2(v/len(d[:200000])) for v in c.values())
+print("entropy : %.4f / 8.0  %s" % (ent, "(可能加密/压缩)" if ent > 7.5 else "(明文/代码)" if ent < 6.5 else "(混合)"))
+sig = {b'\x7fELF':'ELF', b'MZ':'PE', b'\xca\xfe\xba\xbe':'Mach-O FAT',
+       b'\xcf\xfa\xed\xfe':'Mach-O 64', b'PK\x03\x04':'ZIP/APK/IPA',
+       b'\x1f\x8b':'gzip', b'\xfd7zXZ':'xz', b'%PDF':'PDF',
+       b'\x89PNG':'PNG', b'\xff\xd8\xff':'JPEG'}
+for k, v in sig.items():
+    if d.startswith(k): print("format  : %s" % v); break
+PY
+    ;;
+
+  elf)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon elf <file>"; exit 1; }
+    if need readelf; then readelf -h "$f"; echo; readelf -l "$f" | head -30; else echo "需要 readelf: ly-recon install"; fi
+    ;;
+
+  macho)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon macho <file>"; exit 1; }
+    python3 - "$f" <<'PY'
+import struct, sys
+d = open(sys.argv[1],'rb').read()
+if d[:4] == b'\xca\xfe\xba\xbe':
+    n = struct.unpack('>I', d[4:8])[0]
+    print("FAT binary, %d slices" % n)
+    for i in range(n):
+        cpu, sub, off, sz, al = struct.unpack('>IIIII', d[8+i*20:28+i*20])
+        print("  cpu=%#x sub=%#x off=%d size=%d" % (cpu, sub, off, sz))
+    sys.exit()
+if d[:4] != b'\xcf\xfa\xed\xfe':
+    print("不是 64 位 Mach-O"); sys.exit(1)
+ct, cs, ft, ncmds, scmds, fl, _ = struct.unpack('<iiIIIII', d[4:32])
+print("cputype=%#x filetype=%d ncmds=%d sizeofcmds=%d flags=%#x" % (ct, ft, ncmds, scmds, fl))
+off, LC = 32, {0x2:'LC_SYMTAB',0xc:'LC_LOAD_DYLIB',0xd:'LC_ID_DYLIB',0x1c:'LC_RPATH',
+    0x1d:'LC_CODE_SIGNATURE',0x2c:'LC_ENCRYPTION_INFO_64',0x1e:'LC_SEGMENT_64',0x32:'LC_BUILD_VERSION'}
+for i in range(ncmds):
+    cmd, csz = struct.unpack('<II', d[off:off+8])
+    nm = LC.get(cmd, 'LC_%#x' % cmd); extra=''
+    if cmd == 0x2c:
+        co, csz2, cid, _p = struct.unpack('<IIII', d[off+8:off+24])
+        extra = "  cryptid=%d cryptoff=%#x cryptsize=%#x %s" % (cid, co, csz2, "<-- 已解密" if cid==0 else "<-- FairPlay 加密!")
+    if cmd in (0xc, 0xd):
+        o = struct.unpack('<I', d[off+8:off+12])[0]
+        extra = '  ' + d[off+o:off+csz].split(b'\0')[0].decode('utf-8','ignore')
+    if cmd == 0x1e:
+        seg = d[off+8:off+24].split(b'\0')[0].decode('utf-8','ignore')
+        vm, vs, fo, fs = struct.unpack('<QQQQ', d[off+24:off+56])
+        extra = "  %-12s vmaddr=%#x filesize=%#x" % (seg, vm, fs)
+    print("  [%2d] %-24s size=%3d%s" % (i, nm, csz, extra))
+    off += csz
+PY
+    ;;
+
+  apk|ipa)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon apk <file>"; exit 1; }
+    python3 - "$f" <<'PY'
+import sys, zipfile, collections
+z = zipfile.ZipFile(sys.argv[1])
+infos = z.infolist()
+print("entries: %d   (dirs: %d)" % (len(infos), sum(1 for i in infos if i.is_dir())))
+print("\n最大 20 项:")
+for i in sorted(infos, key=lambda x: x.file_size, reverse=True)[:20]:
+    print("  %-58s %10d" % (i.filename, i.file_size))
+ext = collections.Counter()
+for i in infos:
+    if '.' in i.filename: ext[i.filename.rsplit('.',1)[1].lower()] += 1
+print("\n扩展名分布:", dict(ext.most_common(12)))
+bad = z.testzip()
+print("\nCRC:", "全部通过" if bad is None else "失败于 " + bad)
+PY
+    ;;
+
+  entropy)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon entropy <file> [blocks]"; exit 1; }
+    python3 - "$f" "${3:-32}" <<'PY'
+import sys, math, collections
+d = open(sys.argv[1],'rb').read()
+nb = int(sys.argv[2]); bs = max(1, len(d)//nb)
+print("size=%d  blocks=%d  block_size=%d" % (len(d), nb, bs))
+for i in range(nb):
+    ch = d[i*bs:(i+1)*bs]
+    if not ch: break
+    c = collections.Counter(ch); L = len(ch)
+    e = -sum((v/L)*math.log2(v/L) for v in c.values())
+    bar = '#' * int(e/8*50)
+    tag = 'ENC' if e > 7.5 else 'TXT' if e < 6.5 else '   '
+    print('%06x  %.3f %s %s' % (i*bs, e, bar, tag))
+PY
+    ;;
+
+  xor)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon xor <file> [bytes]"; exit 1; }
+    python3 - "$f" "${3:-4096}" <<'PY'
+import sys, re
+d = open(sys.argv[1],'rb').read(int(sys.argv[2]))
+words = [b'the ', b'http', b'<?xml', b'PK\x03\x04', b'flag', b'root', b'admin', b'password']
+for k in range(256):
+    x = bytes(b ^ k for b in d)
+    hits = sum(x.count(w) for w in words)
+    printable = sum(1 for b in x if 32 <= b < 127) / max(1,len(x))
+    if hits or printable > 0.85:
+        print("key=%#04x  hits=%d  printable=%.2f  %r" % (k, hits, printable, x[:48]))
+PY
+    ;;
+
+  carve)
+    f=$2; [ -f "$f" ] || { echo "用法: ly-recon carve <file>"; exit 1; }
+    python3 - "$f" <<'PY'
+import sys
+d = open(sys.argv[1],'rb').read()
+sigs = {b'\x89PNG\r\n\x1a\n':('png',8), b'\xff\xd8\xff':('jpg',0), b'%PDF':('pdf',0),
+        b'PK\x03\x04':('zip',0), b'\x7fELF':('elf',0), b'\x1f\x8b\x08':('gz',0),
+        b'SQLite format 3':('sqlite',0), b'\xcf\xfa\xed\xfe':('macho',0), b'GIF8':('gif',0),
+        b'RIFF':('riff',0), b'\x42\x4d':('bmp',0), b'\x25\x21PS':('ps',0)}
+found = []
+for sig, (name, _) in sigs.items():
+    st = 0
+    while True:
+        i = d.find(sig, st)
+        if i < 0: break
+        found.append((i, name)); st = i + 1
+found.sort()
+print("命中 %d 处:" % len(found))
+for off, nm in found[:120]:
+    print("  %08x  %s" % (off, nm))
+PY
+    ;;
+
+  *) echo "ly-recon: 未知命令 '$1'"; sed -n '2,20p' "$0"; exit 1 ;;
+esac

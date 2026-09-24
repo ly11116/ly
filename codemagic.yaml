@@ -1,25 +1,49 @@
-name: ly-minis-unsigned-ipa
+name: ly-minis-signed-ipa
 
 scripts:
   - name: Checkout submodules
     script: |
       set -euxo pipefail
       git submodule update --init --recursive || echo "no submodules"
+      ls -la deps/ || true
+      ls -la deps/ish 2>/dev/null | head || true
 
   - name: Verify source baseline
     script: |
       set -euxo pipefail
       git rev-parse HEAD
-      grep -n 'IPHONEOS_DEPLOYMENT_TARGET' src/ios/Minis.xcodeproj/project.pbxproj | head
+      echo "--- ly patch 自检 ---"
+      test -f src/ios/Agent/Chat/AIChatViewModel+Subagent.swift
+      test -f src/ios/Agent/Chat/AIChatViewModel+AppControl.swift
+      test -f src/ios/Agent/Chat/AIChatViewModel+UIAutomation.swift
+      test -f src/ios/NativeOffloads/HIDOffload.m
+      test -f src/ios/default_mount/usr/local/bin/ly-recon
+      echo "工具定义注入: $(grep -c 'ly-patch' src/ios/Agent/Chat/AIChatViewModel+ToolDefinitions.swift) 处"
+      echo "分发注入:     $(grep -c 'ly-patch' src/ios/Agent/Chat/AIChatViewModel+ConcurrentTools.swift) 处"
+      echo "工程收录:     $(grep -c '6C792D70' src/ios/Minis.xcodeproj/project.pbxproj) 处"
+      /usr/libexec/PlistBuddy -c "Print :platform-application" signing/TrollStore-entitlements.plist
+      /usr/libexec/PlistBuddy -c "Print :com.apple.private.hid.client.event-dispatch" signing/TrollStore-entitlements.plist
 
-  - name: Build native dependencies
+  # ══════════════════════════════════════════════════════════════════
+  # 依赖构建：iSH 是硬依赖（native_offload.h 和 libish*.a 都从这里来）。
+  # 原来这里是 `|| echo WARN`，依赖挂了也继续，最后在链接阶段给出
+  # 一堆看不懂的报错。改成硬失败 + 显式校验产物。
+  # ══════════════════════════════════════════════════════════════════
+  - name: Build native dependencies (iSH required)
     script: |
       set -euxo pipefail
-      find deps scripts -maxdepth 2 -type f -name '*.sh' | head -30
-      for s in deps/build_ish.sh deps/build_ffmpeg.sh deps/build_lame.sh deps/build_rclone_ios.sh deps/prepare_alpine_rootfs.sh; do
-        [ -f "$s" ] && (bash "$s" || echo "WARN: $s failed") || true
+      for s in deps/build_ffmpeg.sh deps/build_lame.sh deps/build_rclone_ios.sh deps/prepare_alpine_rootfs.sh; do
+        [ -f "$s" ] && bash "$s" || true
       done
-      find deps -maxdepth 3 -type d -name '*.xcframework' -print || true
+      echo "=== building iSH (hard requirement) ==="
+      bash deps/build_ish.sh release
+      echo "=== verify iSH artifacts ==="
+      ls -la deps/libs/
+      ls -la deps/include/ish/kernel/native_offload.h
+      for a in libish.a libish_emu.a libfakefs.a; do
+        test -s "deps/libs/$a" || { echo "FATAL: deps/libs/$a missing or empty"; exit 1; }
+      done
+      echo "✓ iSH 三件套齐全"
 
   - name: Resolve Swift packages
     script: |
@@ -37,18 +61,58 @@ scripts:
         -archivePath build/Minis.xcarchive \
         archive \
         CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGNING_REQUIRED=NO \
+        LY_ISH_LDFLAGS="-lish_emu -lish -lfakefs"
       test -d build/Minis.xcarchive/Products/Applications/Minis.app
 
   - name: Package unsigned IPA
     script: |
       set -euxo pipefail
       cd src/ios
-      mkdir -p build/payload
+      rm -rf build/payload && mkdir -p build/payload
       cp -R build/Minis.xcarchive/Products/Applications/*.app build/payload/
       mkdir -p build/unsigned
-      cd build && zip -qry unsigned/ly-minis-unsigned.ipa payload
+      cd build && rm -f unsigned/*.ipa && zip -qry unsigned/ly-minis-unsigned.ipa payload
       ls -la unsigned/
 
+  # ══════════════════════════════════════════════════════════════════
+  # ly patch 关键步骤：用强化 entitlements 重签
+  # 上一步是 CODE_SIGNING_ALLOWED=NO —— 产物里 **一个 entitlement 都没有**。
+  # 而 iSH 的 asbestos 引擎需要 JIT 权限、apple-hid 需要 HID 权限，
+  # 全都要靠这一步嵌进去。之后 TrollStore 安装时会保留它们。
+  # ══════════════════════════════════════════════════════════════════
+  - name: Sign with TrollStore entitlements
+    script: |
+      set -euxo pipefail
+      sh signing/sign-trollstore.sh \
+        src/ios/build/unsigned/ly-minis-unsigned.ipa \
+        src/ios/build/signed/ly-minis-signed.ipa
+
+  - name: Verify embedded entitlements
+    script: |
+      set -euxo pipefail
+      cd /tmp && rm -rf verify && mkdir verify && cd verify
+      unzip -q "$CM_BUILD_DIR/src/ios/build/signed/ly-minis-signed.ipa"
+      echo "=== 主 App 的 entitlements ==="
+      codesign -d --entitlements :- Payload/Minis.app 2>/dev/null | tee ent.plist || true
+      fail=0
+      for k in platform-application com.apple.security.cs.allow-jit \
+               com.apple.security.cs.allow-unsigned-executable-memory \
+               com.apple.private.hid.client.event-dispatch \
+               com.apple.private.hid.client.event-filter \
+               com.apple.private.iosurface \
+               com.apple.private.mobileinstall.allowedSPI \
+               task_for_pid-allow; do
+        if grep -q "$k" ent.plist; then echo "  ✓ $k"; else echo "  ✗ 缺失 $k"; fail=1; fi
+      done
+      echo "=== 二进制是否链接了 iSH ==="
+      otool -L Payload/Minis.app/Minis | head -20
+      strings Payload/Minis.app/Minis | grep -c "apple-hid" || true
+      strings Payload/Minis.app/Minis | grep -c "apple-apps" || true
+      echo "=== ly-recon 是否随包 ==="
+      ls -la Payload/Minis.app/default_mount/usr/local/bin/ | grep -E "ly-recon|apple" || true
+      [ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
+
 artifacts:
+  - path: src/ios/build/signed/ly-minis-signed.ipa
   - path: src/ios/build/unsigned/ly-minis-unsigned.ipa

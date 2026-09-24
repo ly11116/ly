@@ -11,4 +11,7 @@
 /// Register the apple-open native handler.
 void open_offload_register(void);
 
+/// Register the apple-apps native handler (ly patch: list / launch installed apps).
+void apps_offload_register(void);
+
 #endif /* OpenOffload_h */

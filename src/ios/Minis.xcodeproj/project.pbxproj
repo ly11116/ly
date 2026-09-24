@@ -282,6 +282,7 @@
 		E5L100001 /* NativeOffloadUtils.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100012 /* NativeOffloadUtils.m */; };
 		E5L100002 /* ClipboardOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100022 /* ClipboardOffload.m */; };
 		E5L100003 /* OpenOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100032 /* OpenOffload.m */; };
+		6C792D706174636800000091 /* HIDOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = 6C792D7061746368000000A1 /* HIDOffload.m */; };
 		E5L100004 /* CalendarOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100042 /* CalendarOffload.m */; };
 		E5L100005 /* LocationOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100052 /* LocationOffload.m */; };
 		E5L100006 /* WeatherOffload.m in Sources */ = {isa = PBXBuildFile; fileRef = E5L100062 /* WeatherOffload.m */; };
@@ -429,6 +430,9 @@
 		E5VMA0003 /* AIChatViewModel+MentionMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0013 /* AIChatViewModel+MentionMenu.swift */; };
 		E5VMA0004 /* AIChatViewModel+TitleGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0014 /* AIChatViewModel+TitleGeneration.swift */; };
 		E5VMA0005 /* AIChatViewModel+MemoryTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0015 /* AIChatViewModel+MemoryTools.swift */; };
+		6C792D706174636800000082 /* AIChatViewModel+UIAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C792D706174636800000002 /* AIChatViewModel+UIAutomation.swift */; };
+		6C792D706174636800000081 /* AIChatViewModel+AppControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C792D706174636800000001 /* AIChatViewModel+AppControl.swift */; };
+		6C792D706174636800000080 /* AIChatViewModel+Subagent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C792D706174636800000000 /* AIChatViewModel+Subagent.swift */; };
 		E5VMA0006 /* AIChatViewModel+ProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0016 /* AIChatViewModel+ProviderFactory.swift */; };
 		E5VMA0007 /* AIChatViewModel+ToolDefinitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0017 /* AIChatViewModel+ToolDefinitions.swift */; };
 		E5VMA0008 /* AIChatViewModel+ToolPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5VMA0018 /* AIChatViewModel+ToolPreflight.swift */; };
@@ -950,7 +954,9 @@
 		E5L100021 /* ClipboardOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ClipboardOffload.h; sourceTree = "<group>"; };
 		E5L100022 /* ClipboardOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ClipboardOffload.m; sourceTree = "<group>"; };
 		E5L100031 /* OpenOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OpenOffload.h; sourceTree = "<group>"; };
+		6C792D7061746368000000A0 /* HIDOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = HIDOffload.h; sourceTree = "<group>"; };
 		E5L100032 /* OpenOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = OpenOffload.m; sourceTree = "<group>"; };
+		6C792D7061746368000000A1 /* HIDOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = HIDOffload.m; sourceTree = "<group>"; };
 		E5L100041 /* CalendarOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CalendarOffload.h; sourceTree = "<group>"; };
 		E5L100042 /* CalendarOffload.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CalendarOffload.m; sourceTree = "<group>"; };
 		E5L100051 /* LocationOffload.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LocationOffload.h; sourceTree = "<group>"; };
@@ -1104,6 +1110,9 @@
 		E5VMA0013 /* AIChatViewModel+MentionMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+MentionMenu.swift"; sourceTree = "<group>"; };
 		E5VMA0014 /* AIChatViewModel+TitleGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+TitleGeneration.swift"; sourceTree = "<group>"; };
 		E5VMA0015 /* AIChatViewModel+MemoryTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+MemoryTools.swift"; sourceTree = "<group>"; };
+		6C792D706174636800000002 /* AIChatViewModel+UIAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+UIAutomation.swift"; sourceTree = "<group>"; };
+		6C792D706174636800000001 /* AIChatViewModel+AppControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+AppControl.swift"; sourceTree = "<group>"; };
+		6C792D706174636800000000 /* AIChatViewModel+Subagent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+Subagent.swift"; sourceTree = "<group>"; };
 		E5VMA0016 /* AIChatViewModel+ProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ProviderFactory.swift"; sourceTree = "<group>"; };
 		E5VMA0017 /* AIChatViewModel+ToolDefinitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ToolDefinitions.swift"; sourceTree = "<group>"; };
 		E5VMA0018 /* AIChatViewModel+ToolPreflight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AIChatViewModel+ToolPreflight.swift"; sourceTree = "<group>"; };
@@ -1848,7 +1857,9 @@
 				E5L100071 /* VisionOffload.h */,
 				E5L100072 /* VisionOffload.m */,
 				E5L100031 /* OpenOffload.h */,
+				6C792D7061746368000000A0 /* HIDOffload.h */,
 				E5L100032 /* OpenOffload.m */,
+				6C792D7061746368000000A1 /* HIDOffload.m */,
 				E5L100021 /* ClipboardOffload.h */,
 				E5L100022 /* ClipboardOffload.m */,
 				E5L200010 /* HealthKitOffload.h */,
@@ -2008,6 +2019,9 @@
 				E5VMA0013 /* AIChatViewModel+MentionMenu.swift */,
 				E5VMA0014 /* AIChatViewModel+TitleGeneration.swift */,
 				E5VMA0015 /* AIChatViewModel+MemoryTools.swift */,
+				6C792D706174636800000002 /* AIChatViewModel+UIAutomation.swift */,
+				6C792D706174636800000001 /* AIChatViewModel+AppControl.swift */,
+				6C792D706174636800000000 /* AIChatViewModel+Subagent.swift */,
 				E5VMA0016 /* AIChatViewModel+ProviderFactory.swift */,
 				E5VMA0017 /* AIChatViewModel+ToolDefinitions.swift */,
 				E5VMA0018 /* AIChatViewModel+ToolPreflight.swift */,
@@ -2727,6 +2741,9 @@
 				E5VMA0003 /* AIChatViewModel+MentionMenu.swift in Sources */,
 				E5VMA0004 /* AIChatViewModel+TitleGeneration.swift in Sources */,
 				E5VMA0005 /* AIChatViewModel+MemoryTools.swift in Sources */,
+				6C792D706174636800000082 /* AIChatViewModel+UIAutomation.swift in Sources */,
+				6C792D706174636800000081 /* AIChatViewModel+AppControl.swift in Sources */,
+				6C792D706174636800000080 /* AIChatViewModel+Subagent.swift in Sources */,
 				E5VMA0006 /* AIChatViewModel+ProviderFactory.swift in Sources */,
 				E5VMA0007 /* AIChatViewModel+ToolDefinitions.swift in Sources */,
 				E5VMA0008 /* AIChatViewModel+ToolPreflight.swift in Sources */,
@@ -2825,6 +2842,7 @@
 				E5L100001 /* NativeOffloadUtils.m in Sources */,
 				E5L100002 /* ClipboardOffload.m in Sources */,
 				E5L100003 /* OpenOffload.m in Sources */,
+				6C792D706174636800000091 /* HIDOffload.m in Sources */,
 				E5L100004 /* CalendarOffload.m in Sources */,
 				E5L100005 /* LocationOffload.m in Sources */,
 				E5L100006 /* WeatherOffload.m in Sources */,
@@ -3457,11 +3475,16 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
 				MARKETING_VERSION = 1.12;
 				OTHER_LDFLAGS = (
-					// [ly-ios16-bisect] NO_ISH launch isolation build.
-					// Remove iSH native libraries to prove whether the
-					// startup SIGTRAP is caused by iSH/native initialization.
+					"$(LY_ISH_LDFLAGS)",
 				);
-				OTHER_SWIFT_FLAGS = "";
+				OTHER_SWIFT_FLAGS = "$(LY_SWIFT_EXTRA)";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"$(LY_C_DEFINES)",
+				);
+				LY_ISH_LDFLAGS = "-lish_emu -lish -lfakefs";
+				LY_SWIFT_EXTRA = "";
+				LY_C_DEFINES = "LY_ISH_ENABLED=1";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
 				INFOPLIST_KEY_CFBundleDisplayName = "ly minis";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3512,15 +3535,16 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
 				MARKETING_VERSION = 1.12;
 				OTHER_LDFLAGS = (
-					// [ly-ios16-bisect] NO_ISH launch isolation build.
-					// Remove iSH native libraries to prove whether the
-					// startup SIGTRAP is caused by iSH/native initialization.
+					"$(LY_ISH_LDFLAGS)",
 				);
-				OTHER_SWIFT_FLAGS = "-D NO_RCLONE -D NO_ISH";
+				OTHER_SWIFT_FLAGS = "-D NO_RCLONE $(LY_SWIFT_EXTRA)";
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
-					"NO_ISH=1",
+					"$(LY_C_DEFINES)",
 				);
+				LY_ISH_LDFLAGS = "-lish_emu -lish -lfakefs";
+				LY_SWIFT_EXTRA = "";
+				LY_C_DEFINES = "LY_ISH_ENABLED=1";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

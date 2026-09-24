@@ -227,7 +227,87 @@ extension AIChatViewModel {
             ))
         }
 
+
+        // ===== ly-patch: subagent =====
+        // 子 Agent 委派：把一件独立的任务丢给一个隔离上下文的 agent，
+        // 它有自己的工具白名单和自己的对话历史，只在最后回一份报告。
+        tools.append(AgentToolDefinition(
+            name: "subagent",
+            description: """
+            Delegate ONE self-contained task to a sub-agent that runs in its own isolated context. \n\n\
+            Use this when: the task will generate a lot of intermediate output you do not want in this conversation (bulk file processing, multi-step scraping, long build/verify loops); or you want a fresh, unpolluted context to reason about a sub-problem; or several independent tasks can be farmed out in parallel.\n\n\
+            The sub-agent gets ONLY shell_execute / file_read / file_write / file_edit by default, cannot ask you questions, and cannot delegate further. You receive its FINAL report only — intermediate steps are discarded. Always give it a complete, self-contained brief: it cannot see this conversation.\n\n\
+            Do NOT use it for things you can finish in one or two tool calls — the handoff costs a full extra model round trip.
+            """,
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Delegate bulk image conversion', 'Audit repo for secrets'). Use the same language as the user."),
+                "task": AgentToolParam(type: .string, description: "Complete, self-contained brief for the sub-agent. State the goal, the exact inputs/paths, the constraints, and what the final report must contain. The sub-agent cannot see this conversation and cannot ask you anything."),
+                "tools": AgentToolParam(type: .string, description: "Comma-separated tool whitelist for the sub-agent. Default: 'shell_execute,file_read,file_write,file_edit'. Only widen if the task genuinely needs it."),
+                "model": AgentToolParam(type: .string, description: "Optional model id (or substring) to run the sub-agent on. Defaults to the session's sub-model, then the current model. Use a cheaper/faster model for mechanical work."),
+                "max_turns": AgentToolParam(type: .integer, description: "Hard cap on sub-agent turns (default 12, max 40)."),
+                "cwd": AgentToolParam(type: .string, description: "Optional working directory for every shell command the sub-agent runs (e.g. /var/minis/workspace/myproject)."),
+            ],
+            required: ["tool_title", "task"],
+            propertyOrdering: ["tool_title", "task", "tools", "model", "max_turns", "cwd"]
+        ))
+
+        // ===== ly-patch: app_control =====
+        // 枚举 / 启动已安装的 iOS App。走原生 apple-apps（LSApplicationWorkspace），
+        // 巨魔(TrollStore)安装下可用；普通签名环境会返回 NOT_AVAILABLE。
+        tools.append(AgentToolDefinition(
+            name: "app_control",
+            description: """
+            List and launch installed iOS apps on this device. \n\n\
+            Actions: `list` (enumerate installed apps with bundle id / display name / type), `info` or `schemes` (detail + URL schemes for one app), `open` (launch an app by bundle id, by URL scheme like `weixin://`, or by display name), `frontmost` (diagnostic).\n\n\
+            Requires the app to be installed via TrollStore (platform-application entitlement) — under a normal signature the underlying API returns NOT_AVAILABLE. Launching hands control to the other app, so Minis moves to the background; say so when you do it. To merely OPEN A LINK or a system screen (tel:, mailto:, maps://, settings), prefer `apple-open` via shell_execute instead — that does not switch apps.
+            """,
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'List installed apps', 'Launch WeChat'). Use the same language as the user."),
+                "action": AgentToolParam(type: .string, description: "One of: list, info, schemes, open, frontmost.", enumValues: ["list", "info", "schemes", "open", "frontmost"]),
+                "query": AgentToolParam(type: .string, description: "For action=list: substring filter against display name or bundle id (case-insensitive)."),
+                "bundle_id": AgentToolParam(type: .string, description: "For action=info/schemes: the exact bundle id (e.g. com.tencent.xin)."),
+                "target": AgentToolParam(type: .string, description: "For action=open: bundle id, URL scheme (e.g. weixin://), or display name."),
+                "limit": AgentToolParam(type: .integer, description: "For action=list: cap on returned rows (max 500)."),
+                "user_only": AgentToolParam(type: .boolean, description: "For action=list: hide system apps, show only user-installed ones."),
+            ],
+            required: ["tool_title", "action"],
+            propertyOrdering: ["tool_title", "action", "query", "bundle_id", "target", "limit", "user_only"]
+        ))
+
         return tools
     }
 
 }
+        // ===== ly-patch: ui_automation =====
+        // 驱动别的 App 的闭环：截图 → 视觉模型决策 → apple-hid 注入触控。
+        // 需要 TrollStore 私有权限（com.apple.private.hid.client.event-dispatch）。
+        tools.append(AgentToolDefinition(
+            name: "ui_automation",
+            description: """
+            Drive another app's UI by looking at the screen and injecting real touches. This is the tool for "open the food-delivery app and order X" style tasks.\n\n\
+            How it works: each step it takes a FULL-SCREEN screenshot (including other apps), asks a vision model for the single next action, and executes it via system touch injection. It loops until the goal is reached, the model reports failure, or max_steps runs out.\n\n\
+            Requirements & behaviour you must tell the user about:\n\
+            - Needs a TrollStore (巨魔) install. Under a normal signature the underlying API is blocked and the tool returns a clear error.\n\
+            - The device screen will visibly act by itself, and Minis moves to the background while driving the other app. Say so BEFORE calling this.\n\
+            - It STOPS AUTOMATICALLY before any pay / confirm-order / purchase tap and hands control back to the user. That is intentional and cannot be waived.\n\
+            - A step takes a few seconds; set a realistic max_steps (search+select+cart is typically 6-12).\n\n\
+            Prefer this over app_control when the task needs more than launching the app. Use app_control alone for a plain "open app" request.
+            """,
+            parameters: [
+                "tool_title": AgentToolParam(type: .string, description: "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Order takeout via Meituan UI', 'Drive app to send a message'). Use the same language as the user."),
+                "goal": AgentToolParam(type: .string, description: "What the automation must accomplish, stated concretely and observably (e.g. 'Search 黄焖鸡米饭 on Meituan, add the first result to cart, and stop at the order-confirmation screen'). Includes what NOT to do if relevant."),
+                "app": AgentToolParam(type: .string, description: "Optional app to launch first: bundle id, URL scheme, or display name. Launched via apple-apps before the loop starts."),
+                "max_steps": AgentToolParam(type: .integer, description: "Hard cap on UI steps (default 15, max 40)."),
+                "seconds_per_step": AgentToolParam(type: .double, description: "Settle time after each action in seconds (default 2.2, max 8). Raise it on slow networks."),
+                "model": AgentToolParam(type: .string, description: "Optional vision-capable model id or substring. Defaults to the session sub-model, then the current model."),
+                "stop_before": AgentToolParam(type: .string, description: "Extra stop condition text, e.g. 'the payment password screen'."),
+            ],
+            required: ["tool_title", "goal"],
+            propertyOrdering: ["tool_title", "goal", "app", "max_steps", "seconds_per_step", "model", "stop_before"]
+        ))
+
+        return tools
+    }
+
+}
+
