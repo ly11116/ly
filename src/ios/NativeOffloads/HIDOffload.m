@@ -185,11 +185,16 @@ static void ly_cmd_v(void) {
 // ── 全屏截图 ──
 static NSString *ly_screen_write_png(NSString *path) {
     void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+    // IOSurface 是独立 framework，且本工程并没有链接它 ——
+    // 必须先显式 dlopen，否则 RTLD_DEFAULT 里根本找不到这些符号。
+    void *is = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+    void *h_cg = cg ? cg : RTLD_DEFAULT;
+    void *h_is = is ? is : RTLD_DEFAULT;
     fn_render_display p_render =
-        (fn_render_display)dlsym(cg ? cg : RTLD_DEFAULT, "CARenderServerRenderDisplay");
-    fn_iosurface_create p_create_surf = (fn_iosurface_create)dlsym(RTLD_DEFAULT, "IOSurfaceCreate");
-    fn_iosurface_lock   p_lock        = (fn_iosurface_lock)dlsym(RTLD_DEFAULT, "IOSurfaceLock");
-    fn_iosurface_base   p_base        = (fn_iosurface_base)dlsym(RTLD_DEFAULT, "IOSurfaceGetBaseAddress");
+        (fn_render_display)dlsym(h_cg, "CARenderServerRenderDisplay");
+    fn_iosurface_create p_create_surf = (fn_iosurface_create)dlsym(h_is, "IOSurfaceCreate");
+    fn_iosurface_lock   p_lock        = (fn_iosurface_lock)dlsym(h_is, "IOSurfaceLock");
+    fn_iosurface_base   p_base        = (fn_iosurface_base)dlsym(h_is, "IOSurfaceGetBaseAddress");
 
     if (!p_render || !p_create_surf || !p_lock || !p_base) {
         return [NSString stringWithFormat:@"screenshot unavailable: render=%p create=%p lock=%p base=%p",
@@ -223,8 +228,8 @@ static NSString *ly_screen_write_png(NSString *path) {
     if (!base) return @"IOSurface base address NULL";
 
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(base, w, h, 8, w * 4, cs,
-        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGBitmapInfo bmpInfo = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGContextRef ctx = CGBitmapContextCreate(base, w, h, 8, w * 4, cs, bmpInfo);
     CGColorSpaceRelease(cs);
     if (!ctx) return @"CGBitmapContextCreate failed";
     CGImageRef img = CGBitmapContextCreateImage(ctx);
@@ -294,8 +299,9 @@ static int hid_handler(int argc, char **argv,
         BOOL ok = ly_hid_bootstrap();
         BOOL kbd = (p_kbd != NULL);
         void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+        void *is = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
         BOOL render = dlsym(cg ? cg : RTLD_DEFAULT, "CARenderServerRenderDisplay") != NULL;
-        BOOL surf = dlsym(RTLD_DEFAULT, "IOSurfaceCreate") != NULL;
+        BOOL surf = dlsym(is ? is : RTLD_DEFAULT, "IOSurfaceCreate") != NULL;
         NSDictionary *data = @{
             @"hid_client_ok": @(ok),
             @"reason": ly_hid_reason(),
