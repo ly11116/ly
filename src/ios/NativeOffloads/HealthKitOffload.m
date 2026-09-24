@@ -2500,7 +2500,11 @@ static NSDictionary *logCategoryTypeInfo(NSString *name) {
                                         @"Sleep apnea detection event — iOS 18+.");
         }
         if (@available(iOS 26.2, *)) {
-            table[@"hypertension-event"]        = Cat(HKCategoryTypeIdentifierHypertensionEvent, @"cardio-event", NO, nil,
+            // [ly-ios16-compat] The constant is iOS 26 SDK-only; older SDKs
+            // fail to COMPILE the symbol even inside @available. Its runtime
+            // VALUE is exactly the constant's name (true for every
+            // HKCategoryTypeIdentifier*), so a string literal is equivalent.
+            table[@"hypertension-event"]        = Cat(@"HKCategoryTypeIdentifierHypertensionEvent", @"cardio-event", NO, nil,
                                         @"Hypertension notification — iOS 26.2+.");
         }
     });
