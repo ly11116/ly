@@ -3457,9 +3457,9 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
 				MARKETING_VERSION = 1.12;
 				OTHER_LDFLAGS = (
-					"-lish_emu",
-					"-lish",
-					"-lfakefs",
+					// [ly-ios16-bisect] NO_ISH launch isolation build.
+					// Remove iSH native libraries to prove whether the
+					// startup SIGTRAP is caused by iSH/native initialization.
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
@@ -3512,9 +3512,9 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../deps/libs";
 				MARKETING_VERSION = 1.12;
 				OTHER_LDFLAGS = (
-					"-lish_emu",
-					"-lish",
-					"-lfakefs",
+					// [ly-ios16-bisect] NO_ISH launch isolation build.
+					// Remove iSH native libraries to prove whether the
+					// startup SIGTRAP is caused by iSH/native initialization.
 				);
 				OTHER_SWIFT_FLAGS = "-D NO_RCLONE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
