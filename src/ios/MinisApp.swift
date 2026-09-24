@@ -166,16 +166,20 @@ struct MinisApp: App {
         // .onAppear refresh) locks the sidebar title to the default even when the
         // user set a custom name. refreshCache() only reads the tiny SOUL.md file.
         SoulStore.refreshCache()
-        // Pre-warm KaTeX WKWebView as fallback for formulas SwiftMath can't render
-        KaTeXRenderer.shared.warmUp()
+        // [ly-ios16-lite] Deferred: KaTeX WKWebView warm-up is too heavy during
+        // cold launch on iOS 16.6.1; it can trigger pmap_enter pressure before
+        // the first frame. It is initialized lazily on first formula render.
+        // KaTeXRenderer.shared.warmUp()
         // Pre-warm the biometric capability probe off the main thread. The
         // first LAContext.canEvaluatePolicy call cold-starts the
         // LocalAuthentication XPC daemon (~500 ms); without this it would run
         // inline on the first sessionContextMenu builder during scroll and
         // hang a frame. (T-ios-biometric-probe-scroll-hang)
         BiometricAuth.prewarm()
-        // Clean up Live Activities left over from a previous app session (e.g. app was killed)
-        AgentLiveActivityManager.shared.cleanupStaleActivities(source: "MinisApp.init")
+        // [ly-ios16-lite] Defer cross-process Live Activity cleanup until the
+        // app is interactive; doing it from App.init adds an avoidable launch
+        // allocation spike on iOS 16.
+        // AgentLiveActivityManager.shared.cleanupStaleActivities(source: "MinisApp.init")
         // Start screen-awake controller — it will observe running tasks
         // + the user's opt-in flag and toggle the idle timer accordingly.
         Task { @MainActor in KeepScreenAwakeController.shared.start() }
