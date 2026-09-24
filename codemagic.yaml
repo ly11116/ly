@@ -35,8 +35,16 @@ workflows:
           echo "分发注入:     $(grep -c 'ly-patch' src/ios/Agent/Chat/AIChatViewModel+ConcurrentTools.swift) 处"
           echo "工程收录:     $(grep -c '6C792D70' src/ios/Minis.xcodeproj/project.pbxproj) 处"
           echo "offload 注册: $(grep -c 'offload_register();' src/ios/iSH/ISHKernel.m) 个"
-          /usr/libexec/PlistBuddy -c "Print :platform-application" signing/TrollStore-entitlements.plist
+          # 断言签名清单里有新功能所需的权限。
+          # 注意：这里不再断言 platform-application —— 它是导致启动 SIGTRAP 的
+          # 激进权限之一，已从清单移除。
+          /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups" signing/TrollStore-entitlements.plist
           /usr/libexec/PlistBuddy -c "Print :com.apple.private.hid.client.event-dispatch" signing/TrollStore-entitlements.plist
+          /usr/libexec/PlistBuddy -c "Print :com.apple.private.iosurface" signing/TrollStore-entitlements.plist
+          if /usr/libexec/PlistBuddy -c "Print :platform-application" signing/TrollStore-entitlements.plist 2>/dev/null; then
+            echo "FATAL: 签名清单里仍有 platform-application（已知导致启动崩溃）"; exit 1
+          fi
+          echo "  ✓ 权限清单符合预期"
 
       - name: Prepare xcconfig
         script: |
