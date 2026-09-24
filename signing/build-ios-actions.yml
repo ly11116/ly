@@ -1,0 +1,157 @@
+name: Build ly minis signed IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          sudo xcode-select -s /Applications/Xcode_16.4.app || \
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Prepare xcconfig
+        run: |
+          set -euxo pipefail
+          if [ ! -f src/ios/Configs/ProviderCustomization.xcconfig ]; then
+            cp src/ios/Configs/ProviderCustomization.xcconfig.example src/ios/Configs/ProviderCustomization.xcconfig
+          fi
+          ls src/ios/Configs/
+
+      - name: Install build tools
+        run: |
+          set -euxo pipefail
+          brew install ninja llvm libarchive pkg-config go || true
+          pip3 install meson || true
+          go version || echo "go unavailable"
+
+      - name: Verify ly patch present
+        run: |
+          set -euxo pipefail
+          test -f src/ios/Agent/Chat/AIChatViewModel+Subagent.swift
+          test -f src/ios/NativeOffloads/HIDOffload.m
+          test -f src/ios/default_mount/usr/local/bin/ly-recon
+          echo "tools: $(grep -c 'ly-patch' src/ios/Agent/Chat/AIChatViewModel+ToolDefinitions.swift) 处"
+          echo "offload: $(grep -c 'offload_register' src/ios/iSH/ISHKernel.m) 个注册"
+
+      # iSH 是硬依赖：native_offload.h 与 libish*.a 都来自这里。
+      # 失败必须立刻停，否则会在链接阶段抛出一堆难懂的未定义符号。
+      - name: Build native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$GITHUB_WORKSPACE"
+          bash deps/build_lame.sh
+          bash deps/build_ffmpeg.sh
+          bash deps/build_ish.sh
+          bash deps/prepare_alpine_rootfs.sh
+          bash deps/build_rclone_ios.sh || echo "WARN: rclone build failed (non-fatal)"
+          echo "=== 校验 iSH 产物 ==="
+          ls -la deps/libs/
+          ls -la deps/include/ish/kernel/native_offload.h
+          for a in libish.a libish_emu.a libfakefs.a; do
+            test -s "deps/libs/$a" || { echo "FATAL: deps/libs/$a 缺失或为空"; exit 1; }
+          done
+          find deps/frameworks -maxdepth 1 -type d -name '*.xcframework' -print
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project src/ios/Minis.xcodeproj \
+            -scheme Minis || true
+
+      - name: Archive unsigned
+        run: |
+          set -euxo pipefail
+          cd src/ios
+          xcodebuild \
+            -project Minis.xcodeproj \
+            -scheme Minis \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -archivePath build/Minis.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee archive.log
+          test -d build/Minis.xcarchive/Products/Applications/Minis.app
+
+      - name: Package unsigned IPA
+        run: |
+          set -euxo pipefail
+          cd src/ios
+          rm -rf build/payload && mkdir -p build/payload
+          cp -R build/Minis.xcarchive/Products/Applications/*.app build/payload/
+          mkdir -p build/unsigned
+          cd build && rm -f unsigned/*.ipa && zip -qry unsigned/ly-minis-unsigned.ipa payload
+          ls -la unsigned/
+
+      # ly patch 关键步骤：用强化 entitlements 重签。
+      # 上一步是 CODE_SIGNING_ALLOWED=NO —— 产物里没有任何 entitlement，
+      # 而 apple-hid 需要 HID 权限、iSH(JIT) 需要可执行内存权限，全靠这一步嵌入。
+      - name: Sign with TrollStore entitlements
+        run: |
+          set -euxo pipefail
+          sh signing/sign-trollstore.sh \
+            src/ios/build/unsigned/ly-minis-unsigned.ipa \
+            src/ios/build/signed/ly-minis-signed.ipa
+
+      - name: Verify embedded entitlements
+        run: |
+          set -euxo pipefail
+          cd /tmp && rm -rf verify && mkdir verify && cd verify
+          unzip -q "$GITHUB_WORKSPACE/src/ios/build/signed/ly-minis-signed.ipa"
+          codesign -d --entitlements :- Payload/Minis.app 2>/dev/null | tee ent.plist || true
+          fail=0
+          for k in platform-application \
+                   com.apple.security.cs.allow-jit \
+                   com.apple.security.cs.allow-unsigned-executable-memory \
+                   com.apple.private.hid.client.event-dispatch \
+                   com.apple.private.iosurface \
+                   com.apple.private.mobileinstall.allowedSPI; do
+            if grep -q "$k" ent.plist; then echo "  ✓ $k"; else echo "  ✗ 缺失 $k"; fail=1; fi
+          done
+          echo "=== 二进制含 apple-* 工具 ==="
+          strings Payload/Minis.app/Minis | grep -c "apple-hid" || true
+          strings Payload/Minis.app/Minis | grep -c "apple-apps" || true
+          echo "=== ly-recon 随包 ==="
+          unzip -l "$GITHUB_WORKSPACE/src/ios/build/signed/ly-minis-signed.ipa" | grep -c "ly-recon" || true
+          [ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
+
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ly-minis-signed-ipa
+          path: src/ios/build/signed/ly-minis-signed.ipa
+          retention-days: 14
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ly-minis-unsigned-ipa
+          path: src/ios/build/unsigned/ly-minis-unsigned.ipa
+          retention-days: 14
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-log-${{ github.run_number }}
+          path: |
+            src/ios/archive.log
+            deps/*.log
+          retention-days: 14
+          if-no-files-found: ignore
