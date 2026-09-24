@@ -166,13 +166,25 @@ typedef id   (*ly_msg_id)     (id, SEL);
 typedef BOOL (*ly_msg_bool_id)(id, SEL, id);
 typedef NSArray *(*ly_msg_arr)(id, SEL);
 
+/// 规范写法：objc_msgSend 是可变参数函数，直接强转到具体签名会触发
+/// -Wcast-function-type-mismatch。经 (void *) 中转即可消除该警告。
+static inline id ly_send_id(id obj, const char *sel) {
+    return ((ly_msg_id)(void *)objc_msgSend)(obj, sel_registerName(sel));
+}
+static inline NSArray *ly_send_arr(id obj, const char *sel) {
+    return ((ly_msg_arr)(void *)objc_msgSend)(obj, sel_registerName(sel));
+}
+static inline BOOL ly_send_bool_id(id obj, const char *sel, id arg) {
+    return ((ly_msg_bool_id)(void *)objc_msgSend)(obj, sel_registerName(sel), arg);
+}
+
 /// 获取 LSApplicationWorkspace 单例；不可用时返回 nil（非巨魔环境可能出现）
 static id ly_app_workspace(void) {
     Class cls = NSClassFromString(@"LSApplicationWorkspace");
     if (!cls) return nil;
     __block id ws = nil;
     noff_try_objc(^{
-        ws = ((ly_msg_id)objc_msgSend)((id)cls, sel_registerName("defaultWorkspace"));
+        ws = ly_send_id((id)cls, "defaultWorkspace");
     });
     return ws;
 }
@@ -181,7 +193,7 @@ static id ly_app_workspace(void) {
 static id ly_proxy_get(id proxy, const char *selName) {
     if (!proxy || ![proxy respondsToSelector:sel_registerName(selName)]) return nil;
     __block id v = nil;
-    noff_try_objc(^{ v = ((ly_msg_id)objc_msgSend)(proxy, sel_registerName(selName)); });
+    noff_try_objc(^{ v = ly_send_id(proxy, selName); });
     return v;
 }
 
@@ -250,7 +262,7 @@ static int apps_handler(int argc, char **argv,
 
         __block NSArray *raw = @[];
         noff_try_objc(^{
-            raw = ((ly_msg_arr)objc_msgSend)(ws, sel_registerName("allInstalledApplications"));
+            raw = ly_send_arr(ws, "allInstalledApplications");
         });
         if (![raw isKindOfClass:[NSArray class]]) raw = @[];
 
@@ -299,7 +311,7 @@ static int apps_handler(int argc, char **argv,
             return NOFF_EXIT_INVALID_ARGS;
         }
         __block NSArray *raw = @[];
-        noff_try_objc(^{ raw = ((ly_msg_arr)objc_msgSend)(ws, sel_registerName("allInstalledApplications")); });
+        noff_try_objc(^{ raw = ly_send_arr(ws, "allInstalledApplications"); });
 
         NSDictionary *found = nil;
         for (id proxy in raw) {
@@ -340,7 +352,7 @@ static int apps_handler(int argc, char **argv,
             return NOFF_EXIT_INVALID_ARGS;
         }
 
-        BOOL ok = NO;
+        __block BOOL ok = NO;   // 在 block 内赋值，必须 __block
         NSString *method = @"none";
         NSString *resolvedBID = nil;
 
@@ -368,7 +380,7 @@ static int apps_handler(int argc, char **argv,
             } else {
                 // 按显示名反查
                 __block NSArray *raw = @[];
-                noff_try_objc(^{ raw = ((ly_msg_arr)objc_msgSend)(ws, sel_registerName("allInstalledApplications")); });
+                noff_try_objc(^{ raw = ly_send_arr(ws, "allInstalledApplications"); });
                 for (id proxy in raw) {
                     NSString *name = ly_proxy_get(proxy, "localizedName");
                     if ([name isKindOfClass:[NSString class]] &&
@@ -382,13 +394,13 @@ static int apps_handler(int argc, char **argv,
                 resolvedBID = bid;
                 __block BOOL r = NO;
                 noff_try_objc(^{
-                    r = ((ly_msg_bool_id)objc_msgSend)(ws, sel_registerName("openApplicationWithBundleID:"), bid);
+                    r = ly_send_bool_id(ws, "openApplicationWithBundleID:", bid);
                 });
                 if (r) { ok = YES; method = @"lsapplicationworkspace"; }
                 else {
                     // 退化：用该 app 的第一个 URL scheme
                     __block NSArray *raw2 = @[];
-                    noff_try_objc(^{ raw2 = ((ly_msg_arr)objc_msgSend)(ws, sel_registerName("allInstalledApplications")); });
+                    noff_try_objc(^{ raw2 = ly_send_arr(ws, "allInstalledApplications"); });
                     for (id proxy in raw2) {
                         NSString *b = ly_proxy_get(proxy, "bundleIdentifier");
                         if (![b isEqualToString:bid]) continue;

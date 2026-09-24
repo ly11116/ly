@@ -333,7 +333,7 @@ static int hid_handler(int argc, char **argv,
                 @"Usage: apple-hid tap <x> <y>"), compact, quiet);
             return NOFF_EXIT_INVALID_ARGS;
         }
-        double x = pos[0].doubleValue, y = pos[1].doubleValue;
+        double x = [pos[0] doubleValue], y = [pos[1] doubleValue];
         BOOL ready = ly_hid_bootstrap();
         if (!ready) {
             noff_emit_json(stdout_fd, noff_json_error(TOOL_NAME, sub, NOFF_ERR_NOT_AVAILABLE,
@@ -341,7 +341,7 @@ static int hid_handler(int argc, char **argv,
             return NOFF_EXIT_NOT_AVAILABLE;
         }
         if ([sub isEqualToString:@"tap"]) ly_tap(x, y);
-        else ly_long_press(x, y, pos.count > 2 ? pos[2].doubleValue : 0.6);
+        else ly_long_press(x, y, pos.count > 2 ? [pos[2] doubleValue] : 0.6);
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub,
             @{@"x": @(x), @"y": @(y), @"injected": @YES}), compact, quiet);
         return NOFF_EXIT_SUCCESS;
@@ -358,9 +358,9 @@ static int hid_handler(int argc, char **argv,
                 [NSString stringWithFormat:@"touch injection unavailable: %@", ly_hid_reason()]), compact, quiet);
             return NOFF_EXIT_NOT_AVAILABLE;
         }
-        ly_swipe(pos[0].doubleValue, pos[1].doubleValue,
-                 pos[2].doubleValue, pos[3].doubleValue,
-                 pos.count > 4 ? pos[4].doubleValue : 0.35);
+        ly_swipe([pos[0] doubleValue], [pos[1] doubleValue],
+                 [pos[2] doubleValue], [pos[3] doubleValue],
+                 pos.count > 4 ? [pos[4] doubleValue] : 0.35);
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub, @{@"ok": @YES}), compact, quiet);
         return NOFF_EXIT_SUCCESS;
     }
@@ -416,7 +416,7 @@ static int hid_handler(int argc, char **argv,
                 @"Usage: apple-hid key <usage-hex|enter|escape|home|space>"), compact, quiet);
             return NOFF_EXIT_INVALID_ARGS;
         }
-        NSString *k = pos[0].lowercaseString;
+        NSString *k = [pos[0] lowercaseString];
         uint32_t usage = 0;
         if ([k isEqualToString:@"enter"]) usage = 0x28;
         else if ([k isEqualToString:@"escape"] || [k isEqualToString:@"esc"]) usage = 0x29;
