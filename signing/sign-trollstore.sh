@@ -74,8 +74,9 @@ if ! grep -q "<key>" /tmp/_ent.plist; then
 fi
 
 fail=0
-for k in platform-application \
+for k in com.apple.security.application-groups \
          com.apple.private.hid.client.event-dispatch \
+         com.apple.private.hid.client.event-filter \
          com.apple.private.iosurface \
          com.apple.private.mobileinstall.allowedSPI \
          com.apple.security.cs.allow-jit; do
@@ -85,4 +86,24 @@ if [ $fail -ne 0 ]; then
   echo "FATAL: entitlements 未完整嵌入（上面列出缺失项）"
   exit 1
 fi
+
+# 关键断言：App Group 的值必须是 group.com.ly.minis。
+# 缺了它 Minis 启动时拿不到共享容器 → EXC_BREAKPOINT/SIGTRAP（实测过）。
+if grep -q "group.com.ly.minis" /tmp/_ent.plist; then
+  echo "  OK group.com.ly.minis (app group value)"
+else
+  echo "  FATAL: 缺少 group.com.ly.minis —— 启动会 SIGTRAP"
+  exit 1
+fi
+
+# 反向断言：确认那些会破坏沙箱语义的激进权限没有被带进来
+for k in platform-application \
+         com.apple.private.security.no-sandbox \
+         com.apple.private.security.no-container \
+         task_for_pid-allow; do
+  if grep -q "$k" /tmp/_ent.plist; then
+    echo "  WARNING: 含有激进权限 $k（已知会导致启动问题）"
+  fi
+done
+
 echo "用 TrollStore 安装此 IPA。安装后检查: 设置里确认 Minis 出现, 启动不闪退。"
