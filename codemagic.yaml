@@ -141,7 +141,20 @@ workflows:
           unzip -l "$CM_BUILD_DIR/src/ios/build/signed/ly-minis-signed.ipa" | grep "ly-recon" || true
           [ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
 
+      # iOS 上点 .ipa 链接会直接弹「安装」，没有「另存为」；
+      # 而 .zip 是普通下载，会落进 Files/Downloads。
+      # 所以额外产出一个 zip，方便在 iPhone 上下载后再传到 iPad。
+      - name: Package deliverable zip
+        script: |
+          set -euxo pipefail
+          cd src/ios/build
+          rm -rf dist && mkdir -p dist
+          cp signed/ly-minis-signed.ipa dist/
+          ( cd dist && shasum -a 256 ly-minis-signed.ipa > SHA256SUMS.txt && cat SHA256SUMS.txt )
+          ( cd dist && zip -qry ly-minis-deliver.zip ly-minis-signed.ipa SHA256SUMS.txt )
+          ls -la dist/
+
     artifacts:
+      - src/ios/build/dist/ly-minis-deliver.zip
       - src/ios/build/signed/ly-minis-signed.ipa
-      - src/ios/build/unsigned/ly-minis-unsigned.ipa
       - src/ios/archive.log
