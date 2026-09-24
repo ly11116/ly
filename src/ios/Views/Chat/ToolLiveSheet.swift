@@ -2394,8 +2394,12 @@ private struct ToolStatusBarSurface: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
+            #if compiler(>=6.2)
             content.glassEffect(.regular, in: shape)
+            #else
+            content.background(.ultraThinMaterial, in: shape)
+            #endif
         } else {
             content
                 .background(Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : UIColor.systemBackground }))

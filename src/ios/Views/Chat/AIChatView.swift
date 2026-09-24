@@ -4640,9 +4640,11 @@ private struct ComposerSurface: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
             content
+                #if compiler(>=6.2)
                 .glassEffect(.regular, in: shape)
+                #endif
                 .clipShape(shape)
         } else {
             content

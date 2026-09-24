@@ -95,11 +95,13 @@ private struct ContextMenuPreviewSurface: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
             content
                 // Opaque floor first — see the note above.
                 .background(shape.fill(ChatColors.background))
+                #if compiler(>=6.2)
                 .glassEffect(.regular, in: shape)
+                #endif
         } else {
             content.background(ChatColors.background)
         }
@@ -147,8 +149,12 @@ private struct UserBubbleSurface: ViewModifier {
                         .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                         .foregroundStyle(ChatColors.secondaryText.opacity(0.5))
                 )
-        } else if #available(iOS 26.0, *) {
+        } else if #available(iOS 26.0, *), GlassCompat.supported {
+            #if compiler(>=6.2)
             content.glassEffect(.regular, in: shape)
+            #else
+            content.background(shape.fill(ChatColors.userBubble))
+            #endif
         } else {
             content.background(shape.fill(ChatColors.userBubble))
         }

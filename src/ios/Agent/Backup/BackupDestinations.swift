@@ -315,7 +315,7 @@ enum BackupDestinations {
     ///   destination at a time, and scanning every mount to then discard all
     ///   but one would make an offline share slow down a folder that is
     ///   perfectly reachable.
-    static func listPackages(folderId: UUID? = nil) -> [FoundPackage] {
+    static func listPackages(folderId: UUID? = nil) async -> [FoundPackage] {
         var found: [FoundPackage] = []
         let fm = FileManager.default
 

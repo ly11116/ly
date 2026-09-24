@@ -1,5 +1,19 @@
 import SwiftUI
 
+// [ly-glass-compat] Glass APIs (.glassEffect/.glassEffectID/Glass) only exist
+// in the iOS 26 SDK (Swift 6.2+ / Xcode 26). Older toolchains fail to COMPILE
+// any reference to them even inside `#available`, so gate both compile and
+// runtime through this constant: on old compilers the glass branch is dead
+// code that never references the symbols.
+enum GlassCompat {
+    #if compiler(>=6.2)
+    static let supported = true
+    #else
+    static let supported = false
+    #endif
+}
+
+
 private let shareLog = AppLogger(category: "Share")
 private let draftLog = AppLogger(category: "DraftSession")
 
@@ -216,10 +230,17 @@ private let folderEdgeHighlight = Color(UIColor { traits in
 /// over a separately-drawn shape.
 private struct SearchBarSurface: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
             // No .clipShape needed — glassEffect(in:) already clips to the
             // capsule, and no .shadow: the material carries its own.
+            #if compiler(>=6.2)
             content.glassEffect(.regular, in: .capsule)
+            #else
+            content
+                .background(Color(UIColor.secondarySystemBackground))
+                .clipShape(Capsule())
+                .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
+            #endif
         } else {
             content
                 .background(Color(UIColor.secondarySystemBackground))
@@ -243,8 +264,10 @@ private struct FABGlassMorphID: ViewModifier {
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
+            #if compiler(>=6.2)
             content.glassEffectID("fabSearch", in: namespace)
+            #endif
         } else {
             content
         }
@@ -4298,44 +4321,23 @@ struct ContentView: View {
         fallbackShadowOpacity: Double,
         @ViewBuilder icon: () -> Icon
     ) -> some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), GlassCompat.supported {
+            #if compiler(>=6.2)
             icon()
                 .frame(width: 56, height: 56)
                 .glassEffect(
                     tint.map { Glass.regular.tint($0) } ?? Glass.regular,
                     in: .circle
                 )
-                // [T-fab-glass-contextmenu-regression] Without this the long-press
-                // menu on the new-chat FAB stops opening.
-                //
-                // The pre-glass label was `Circle().fill(...)`, a filled shape,
-                // so its hit-test region was the whole 56x56 disc and
-                // `.contextMenu` (attached to that same view) picked up a
-                // long-press anywhere on the button. The glass version's content
-                // is a bare `Image` — `.frame` only reserves space, and
-                // `.glassEffect` draws a material without contributing a
-                // hit-testable shape — so the only interactive pixels left were
-                // the glyph's own strokes. A long press on the surrounding
-                // (visually filled) area hit nothing and no menu appeared.
-                //
-                // Tapping still worked, which is what made this look like a
-                // gesture-priority fight with glassEffect rather than a hit-test
-                // hole: DraggableFAB re-applies `.frame` and `.onTapGesture` at
-                // ITS level, one layer out, so taps were being caught there.
-                // `.contextMenu` is the only one of the three attached inside.
-                //
-                // Restoring an explicit circular content shape gives the glass
-                // surface the same hit region the filled Circle had. Applied
-                // AFTER glassEffect so it covers the rendered disc.
                 .contentShape(.circle)
-                // …and the same shape again for the context-menu PREVIEW.
-                // `.contentShape(_:)` only sets the INTERACTION region; the
-                // lifted platter resolves its shape separately and otherwise
-                // falls back to the view's rectangular bounds, which is what
-                // showed a grey rounded-rect slab peeking out from under the
-                // circular button on long press. `ChatMessageRow` already
-                // declares the two shapes separately for the same reason.
                 .contentShape(.contextMenuPreview, Circle())
+            #else
+            icon()
+                .frame(width: 56, height: 56)
+                .background(fallbackFill)
+                .clipShape(Circle())
+                .contentShape(.circle)
+            #endif
         } else {
             Circle()
                 .fill(fallbackFill)

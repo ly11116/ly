@@ -474,4 +474,39 @@ private final class AlarmLabelStore {
     }
 }
 
+#else
+// [ly-ios16-compat] AlarmKit doesn't exist in the iOS 18.5 SDK (Xcode 16.4).
+// Call sites (AlarmOffload.m, AlarmListView, ContentView) reference
+// AlarmOffloadBridge unconditionally, so provide a no-op stub that reports
+// "unsupported" instead of letting the build fail with 'cannot find in scope'.
+import Foundation
+
+@objc public class AlarmOffloadBridge: NSObject {
+    private static let unsupportedError: NSError = NSError(
+        domain: "com.ly.minis.alarm",
+        code: 1001,
+        userInfo: [NSLocalizedDescriptionKey: "AlarmKit requires iOS 26 or newer (this build was compiled without AlarmKit)"]
+    )
+
+    @objc public static func requestAuthorizationWithCompletion(_ completion: @escaping (Bool, Error?) -> Void) {
+        completion(false, unsupportedError)
+    }
+
+    @objc public static func listAlarms(_ completion: @escaping ([[String: Any]]?, Error?) -> Void) {
+        completion(nil, unsupportedError)
+    }
+
+    @objc public static func cancelAlarm(withId id: String, completion: @escaping (Bool, Error?) -> Void) {
+        completion(false, unsupportedError)
+    }
+
+    @objc public static func setAlarm(_ payload: [String: Any], completion: @escaping ([String: Any]?, Error?) -> Void) {
+        completion(nil, unsupportedError)
+    }
+
+    @objc public static func setTimer(_ payload: [String: Any], completion: @escaping ([String: Any]?, Error?) -> Void) {
+        completion(nil, unsupportedError)
+    }
+}
+
 #endif // canImport(AlarmKit)

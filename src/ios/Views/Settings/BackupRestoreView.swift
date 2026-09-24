@@ -895,7 +895,7 @@ struct FolderPackageListView: View {
         // the server list detaches its rclone calls.
         let id = folder.id
         let found = await Task.detached(priority: .userInitiated) {
-            BackupDestinations.listPackages(folderId: id)
+            await BackupDestinations.listPackages(folderId: id)
         }.value
         packages = found
         loading = false

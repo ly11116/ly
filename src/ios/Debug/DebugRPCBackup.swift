@@ -235,7 +235,7 @@ enum DebugRPCBackup {
             "mounts": mounts,
             "selectedIds": BackupDestinations.selectedIds.map(\.uuidString),
             "eligibleCount": BackupDestinations.eligibleFolders.count,
-            "packagesInDestinations": BackupDestinations.listPackages().map {
+            "packagesInDestinations": (await BackupDestinations.listPackages()).map {
                 ["name": $0.url.lastPathComponent, "folder": $0.folderName, "size": $0.size]
             },
         ]

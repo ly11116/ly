@@ -214,7 +214,7 @@ struct SendPromptIntent: AppIntent {
                 prompt: prompt,
                 responseText: responseText
             )
-            return .result(value: result, dialog: "\(responseText.prefix(500))")
+            return .result(value: result, dialog: String(responseText.prefix(500)))
         }
 
         // Async mode: return immediately, notify on completion in background
