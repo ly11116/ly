@@ -59,6 +59,7 @@
 #import "WeatherOffload.h"
 #import "VisionOffload.h"
 #import "OpenOffload.h"
+#import "HIDOffload.h"
 #import "ClipboardOffload.h"
 #import "HealthKitOffload.h"
 #import "PhotosOffload.h"
