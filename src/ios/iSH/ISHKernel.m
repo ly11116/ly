@@ -6,6 +6,21 @@
 //
 
 #import "ISHKernel.h"
+
+#if NO_ISH
+
+@implementation ISHKernel
++ (instancetype)shared { static ISHKernel *k; static dispatch_once_t once; dispatch_once(&once, ^{ k = [self new]; }); return k; }
+- (BOOL)isBooted { return NO; }
+- (int)bootWithRootPath:(NSString *)rootPath { return -1; }
+- (void)refreshDns {}
+- (void)beginBackgroundCPUGovernor {}
+- (void)endBackgroundCPUGovernor {}
+- (int)bindMountPath:(NSString *)linuxPath toHostPath:(NSString *)hostPath { return -1; }
+- (int)bindUnmountPath:(NSString *)linuxPath { return -1; }
+@end
+
+#else
 #import "CurrentRoot.h"
 // [GH#175] For sizeof(sockaddr_un.sun_path) — the Darwin HOST limit that
 // iSH's unchecked sprintf in fs/sock.c writes into. Safe to include here:
@@ -1933,3 +1948,5 @@ static void gov_tick(void) {
 }
 
 @end
+
+#endif

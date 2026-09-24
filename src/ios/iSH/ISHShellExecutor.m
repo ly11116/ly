@@ -6,6 +6,22 @@
 //
 
 #import "ISHShellExecutor.h"
+
+#if NO_ISH
+
+@implementation ISHShellExecutor
++ (void)executeExecutable:(NSString *)executable
+                arguments:(NSArray<NSString *> *)arguments
+              environment:(NSDictionary<NSString *, NSString *> *)environment
+                stdinData:(NSData *)stdinData
+                fsContext:(id)fsContext
+             lineCallback:(void (^)(NSString *line))lineCallback
+               completion:(void (^)(int status, NSError *error))completion {
+    if (completion) completion(127, [NSError errorWithDomain:@"com.ly.minis.ish" code:127 userInfo:@{NSLocalizedDescriptionKey:@"iSH is disabled in this launch-isolation build"}]);
+}
+@end
+
+#else
 #import "ISHKernel.h"
 
 #include <poll.h>
@@ -1194,3 +1210,5 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
 }
 
 @end
+
+#endif

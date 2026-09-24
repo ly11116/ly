@@ -3516,7 +3516,11 @@
 					// Remove iSH native libraries to prove whether the
 					// startup SIGTRAP is caused by iSH/native initialization.
 				);
-				OTHER_SWIFT_FLAGS = "-D NO_RCLONE";
+				OTHER_SWIFT_FLAGS = "-D NO_RCLONE -D NO_ISH";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"NO_ISH=1",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.ly.minis;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
