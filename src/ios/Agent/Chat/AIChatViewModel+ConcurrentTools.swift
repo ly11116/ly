@@ -870,7 +870,7 @@ extension AIChatViewModel {
             toolOutput = memResult.output
             toolSuccess = memResult.success
 
-        // ===== ly-patch: subagent =====
+// ===== ly-patch: subagent =====
         case "subagent":
             let subResult = await executeSubagentTool(from: argsJson)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {
@@ -888,11 +888,7 @@ extension AIChatViewModel {
             toolOutput = appResult.output
             toolSuccess = appResult.success
 
-        default:
-            toolOutput = "Error: Unknown tool '\(tu.name)'"
-            toolSuccess = false
-        }
-        // ===== ly-patch: ui_automation =====
+// ===== ly-patch: ui_automation =====
         case "ui_automation":
             let uiResult = await executeUIAutomationTool(from: argsJson)
             if msgIdx < messages.count, blockIdx < messages[msgIdx].blocks.count {

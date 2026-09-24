@@ -227,8 +227,7 @@ extension AIChatViewModel {
             ))
         }
 
-
-        // ===== ly-patch: subagent =====
+// ===== ly-patch: subagent =====
         // 子 Agent 委派：把一件独立的任务丢给一个隔离上下文的 agent，
         // 它有自己的工具白名单和自己的对话历史，只在最后回一份报告。
         tools.append(AgentToolDefinition(
@@ -274,11 +273,7 @@ extension AIChatViewModel {
             propertyOrdering: ["tool_title", "action", "query", "bundle_id", "target", "limit", "user_only"]
         ))
 
-        return tools
-    }
-
-}
-        // ===== ly-patch: ui_automation =====
+// ===== ly-patch: ui_automation =====
         // 驱动别的 App 的闭环：截图 → 视觉模型决策 → apple-hid 注入触控。
         // 需要 TrollStore 私有权限（com.apple.private.hid.client.event-dispatch）。
         tools.append(AgentToolDefinition(
@@ -310,4 +305,3 @@ extension AIChatViewModel {
     }
 
 }
-
