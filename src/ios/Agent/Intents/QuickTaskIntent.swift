@@ -217,7 +217,7 @@ struct QuickTaskIntent: AppIntent {
                 prompt: task.prompt,
                 responseText: responseText
             )
-            return .result(value: result, dialog: String(responseText.prefix(500)))
+            return .result(value: result, dialog: IntentDialog(stringLiteral: String(responseText.prefix(500))))
         }
 
         // Async mode: return immediately
