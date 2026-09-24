@@ -40,7 +40,29 @@ codesign --force --sign - --entitlements "$ENT" --timestamp=none "$APP"
 codesign --verify --verbose=2 "$APP" || true
 
 # 5. 打包
-mkdir -p "$(dirname "$OUT_IPA")"
-cd "$WORK" && zip -qry "$OUT_IPA" Payload
-echo "OK -> $OUT_IPA"
+# 5. 打包
+# 注意：下面会 cd 进临时目录，必须先把输出路径解析成绝对路径，
+# 否则相对路径在 cd 之后失效 → zip: Could not create output file。
+OUT_DIR=$(dirname "$OUT_IPA")
+OUT_NAME=$(basename "$OUT_IPA")
+mkdir -p "$OUT_DIR"
+OUT_ABS="$(cd "$OUT_DIR" && pwd)/$OUT_NAME"
+
+( cd "$WORK" && zip -qry "$OUT_ABS" Payload )
+
+echo "OK -> $OUT_ABS"
+ls -la "$OUT_ABS"
+
+# 6. 自检：确认强化 entitlements 真的嵌进去了
+echo "--- 嵌入的 entitlements ---"
+codesign -d --entitlements :- "$APP" 2>/dev/null | tee /tmp/_ent.plist || true
+fail=0
+for k in platform-application \
+         com.apple.private.hid.client.event-dispatch \
+         com.apple.private.iosurface \
+         com.apple.private.mobileinstall.allowedSPI \
+         com.apple.security.cs.allow-jit; do
+  if grep -q "$k" /tmp/_ent.plist; then echo "  OK $k"; else echo "  MISSING $k"; fail=1; fi
+done
+[ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
 echo "用 TrollStore 安装此 IPA。安装后检查: 设置里确认 Minis 出现, 启动不闪退。"
