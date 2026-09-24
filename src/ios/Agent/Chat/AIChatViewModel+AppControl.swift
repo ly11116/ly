@@ -29,7 +29,7 @@ extension AIChatViewModel {
             query = obj["query"] as? String
             bundleID = obj["bundle_id"] as? String
             target = obj["target"] as? String
-            if let n = obj["limit"] as? Int, n > 0 { limit = min(n, 500) }
+            if let n = (obj["limit"] as? NSNumber)?.intValue, n > 0 { limit = min(n, 500) }
             userOnly = (obj["user_only"] as? Bool) ?? false
         }
 

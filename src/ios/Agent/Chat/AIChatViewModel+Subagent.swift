@@ -65,8 +65,8 @@ extension AIChatViewModel {
             p.tools = t.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         }
         p.model = obj["model"] as? String
-        if let n = obj["max_turns"] as? Int, n > 0 { p.maxTurns = min(n, 40) }
-        if let n = obj["max_tokens"] as? Int, n > 0 { p.maxTokens = min(n, 32_000) }
+        if let n = (obj["max_turns"] as? NSNumber)?.intValue, n > 0 { p.maxTurns = min(n, 40) }
+        if let n = (obj["max_tokens"] as? NSNumber)?.intValue, n > 0 { p.maxTokens = min(n, 32_000) }
         p.workingDirectory = obj["cwd"] as? String
         return p
     }

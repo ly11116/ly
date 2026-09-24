@@ -293,7 +293,7 @@ extension AIChatViewModel {
                 "goal": AgentToolParam(type: .string, description: "What the automation must accomplish, stated concretely and observably (e.g. 'Search 黄焖鸡米饭 on Meituan, add the first result to cart, and stop at the order-confirmation screen'). Includes what NOT to do if relevant."),
                 "app": AgentToolParam(type: .string, description: "Optional app to launch first: bundle id, URL scheme, or display name. Launched via apple-apps before the loop starts."),
                 "max_steps": AgentToolParam(type: .integer, description: "Hard cap on UI steps (default 15, max 40)."),
-                "seconds_per_step": AgentToolParam(type: .double, description: "Settle time after each action in seconds (default 2.2, max 8). Raise it on slow networks."),
+                "seconds_per_step": AgentToolParam(type: .integer, description: "Settle time after each action, in whole seconds (default 2, max 8). Raise it on slow networks."),
                 "model": AgentToolParam(type: .string, description: "Optional vision-capable model id or substring. Defaults to the session sub-model, then the current model."),
                 "stop_before": AgentToolParam(type: .string, description: "Extra stop condition text, e.g. 'the payment password screen'."),
             ],

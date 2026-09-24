@@ -42,8 +42,10 @@ extension AIChatViewModel {
               let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return p }
         p.goal = (o["goal"] as? String) ?? (o["task"] as? String) ?? ""
         p.app = o["app"] as? String
-        if let n = o["max_steps"] as? Int, n > 0 { p.maxSteps = min(n, 40) }
-        if let s = o["seconds_per_step"] as? Double, s > 0 { p.secondsPerStep = min(s, 8) }
+        if let n = (o["max_steps"] as? NSNumber)?.intValue, n > 0 { p.maxSteps = min(n, 40) }
+        if let s = (o["seconds_per_step"] as? NSNumber)?.doubleValue, s > 0 {
+            p.secondsPerStep = min(s, 8)
+        }
         p.model = o["model"] as? String
         p.stopBefore = o["stop_before"] as? String
         return p
