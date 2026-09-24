@@ -114,26 +114,36 @@ check_prerequisites() {
         log_info "Found LLVM Clang: $LLVM_CLANG"
     fi
 
-    # CI fix: brew llvm's clang sometimes rejects '-fuse-ld=lld' (name lookup
-    # fails while ld64.lld binary exists). Install matching lld and, if the
-    # absolute linker binary exists, patch the vdso meson to use it.
-    # NOTE: the probe MUST perform a LINK (-o to a temp file), not just -c
-    # compile — the invalid-linker-name error only fires at link time.
+    # CI fix: brew llvm's clang rejects '-fuse-ld=lld' (name lookup fails
+    # while the lld binary exists under a different name). Probe via an
+    # empty link is UNRELIABLE (clang short-circuits on empty input), so
+    # we unconditionally rewrite the vdso meson to an absolute linker path
+    # whenever a usable linker binary is present.
     if [ -x "$LLVM_CLANG" ]; then
         LLVM_BIN_DIR="$(dirname "$LLVM_CLANG")"
-        LLD_PROBE_OUT="$(mktemp -t vdso_probe).out"
-        rm -f "$LLD_PROBE_OUT"
-        if [ -x "$LLVM_BIN_DIR/ld64.lld" ] && ! "$LLVM_CLANG" -fuse-ld=lld -target aarch64-linux-gnu -nostdlib -shared -o "$LLD_PROBE_OUT" /dev/null 2>/dev/null; then
-            log_info "clang rejects -fuse-ld=lld; patching meson to use absolute ld64.lld path"
+        LLD_ABS=""
+        for cand in "$LLVM_BIN_DIR/ld64.lld" "$LLVM_BIN_DIR/lld"; do
+            if [ -x "$cand" ]; then LLD_ABS="$cand"; break; fi
+        done
+        if [ -z "$LLD_ABS" ] && command -v brew &> /dev/null; then
+            log_info "no lld in llvm bin; installing lld via brew..."
+            brew install lld 2>/dev/null || true
+            for cand in "$LLVM_BIN_DIR/ld64.lld" "$LLVM_BIN_DIR/lld" "$(command -v ld64.lld 2>/dev/null)" "$(command -v lld 2>/dev/null)"; do
+                if [ -n "$cand" ] && [ -x "$cand" ]; then LLD_ABS="$cand"; break; fi
+            done
+        fi
+        if [ -n "$LLD_ABS" ]; then
+            log_info "using absolute lld: $LLD_ABS"
             VDSO_MB="$ROOT/deps/ish/vdso/arm64/meson.build"
             if [ -f "$VDSO_MB" ] && grep -q "'-fuse-ld=lld'" "$VDSO_MB"; then
-                sed -i.bak "s#'-fuse-ld=lld'#'-fuse-ld=$LLVM_BIN_DIR/ld64.lld'#" "$VDSO_MB"
-                log_info "patched: $VDSO_MB -> $LLVM_BIN_DIR/ld64.lld"
+                sed -i.bak "s#'-fuse-ld=lld'#'-fuse-ld=$LLD_ABS'#" "$VDSO_MB"
+                log_info "patched: $VDSO_MB -> $LLD_ABS"
+            else
+                log_info "no '-fuse-ld=lld' literal in meson (already patched?)"
             fi
         else
-            log_info "clang -fuse-ld=lld probe OK (or no ld64.lld present), no patch needed"
+            log_warning "no lld binary found anywhere; VDSO link may fail"
         fi
-        rm -f "$LLD_PROBE_OUT"
     fi
 
     log_success "Prerequisites check passed"
