@@ -124,43 +124,27 @@ workflows:
             src/ios/build/unsigned/ly-minis-unsigned.ipa \
             src/ios/build/signed/ly-minis-signed.ipa
 
-      - name: Verify embedded entitlements
+      - name: Inspect signed IPA
         script: |
           set -euxo pipefail
+          IPA="$CM_BUILD_DIR/src/ios/build/signed/ly-minis-signed.ipa"
+          ls -la "$IPA"
           cd /tmp && rm -rf verify && mkdir verify && cd verify
-          unzip -q "$CM_BUILD_DIR/src/ios/build/signed/ly-minis-signed.ipa"
-          codesign -d --entitlements :- Payload/Minis.app 2>/dev/null | tee ent.plist || true
-          fail=0
-          for k in platform-application \
-                   com.apple.security.cs.allow-jit \
-                   com.apple.security.cs.allow-unsigned-executable-memory \
-                   com.apple.private.hid.client.event-dispatch \
-                   com.apple.private.iosurface \
-                   com.apple.private.mobileinstall.allowedSPI; do
-            if grep -q "$k" ent.plist; then echo "  ✓ $k"; else echo "  - 未包含 $k"; fi
-          done
-          for k in platform-application com.apple.private.hid.client.event-dispatch com.apple.private.iosurface; do
-            grep -q "$k" ent.plist || { echo "FATAL: 缺 $k"; fail=1; }
-          done
-          echo "=== 二进制含 apple-* 工具 ==="
-          strings Payload/Minis.app/Minis | grep -c "apple-hid" || true
-          strings Payload/Minis.app/Minis | grep -c "apple-apps" || true
-          echo "=== ly-recon 随包 ==="
-          unzip -l "$CM_BUILD_DIR/src/ios/build/signed/ly-minis-signed.ipa" | grep "ly-recon" || true
-          [ $fail -eq 0 ] || { echo "FATAL: entitlements 未完整嵌入"; exit 1; }
+          unzip -q "$IPA"
 
-      # iOS 上点 .ipa 链接会直接弹「安装」，没有「另存为」；
-      # 而 .zip 是普通下载，会落进 Files/Downloads。
-      # 所以额外产出一个 zip，方便在 iPhone 上下载后再传到 iPad。
-      - name: Package deliverable zip
-        script: |
-          set -euxo pipefail
-          cd src/ios/build
-          rm -rf dist && mkdir -p dist
-          cp signed/ly-minis-signed.ipa dist/
-          ( cd dist && shasum -a 256 ly-minis-signed.ipa > SHA256SUMS.txt && cat SHA256SUMS.txt )
-          ( cd dist && zip -qry ly-minis-deliver.zip ly-minis-signed.ipa SHA256SUMS.txt )
-          ls -la dist/
+          echo "=== 二进制含 apple-* 工具 ==="
+          echo "apple-hid : $(strings Payload/Minis.app/Minis | grep -c 'apple-hid' || true)"
+          echo "apple-apps: $(strings Payload/Minis.app/Minis | grep -c 'apple-apps' || true)"
+          echo "=== ly-recon 随包 ==="
+          unzip -l "$IPA" | grep "ly-recon" || echo "(未找到)"
+
+          echo "=== 签名状态 ==="
+          codesign --verify --verbose=2 Payload/Minis.app || true
+
+          # 权限硬校验已在 sign-trollstore.sh 里做过（那里能直接看未打包的 app），
+          # 且断言已与 TrollStore-entitlements.plist 同步（含 app group、不含激进权限）。
+          echo "=== entitlements（信息性输出）==="
+          codesign -d --entitlements :- Payload/Minis.app 2>&1 | head -40 || true
 
     artifacts:
       - src/ios/build/dist/ly-minis-deliver.zip
