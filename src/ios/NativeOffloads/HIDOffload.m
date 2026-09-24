@@ -119,7 +119,8 @@ static void ly_tap(double x, double y) {
 }
 
 static void ly_swipe(double x1, double y1, double x2, double y2, double seconds) {
-    int steps = MAX(8, (int)(seconds * 60.0));
+    int steps = (int)(seconds * 60.0);
+    if (steps < 8) steps = 8;
     ly_touch_event(1, kLyMaskRange | kLyMaskTouch, x1, y1);
     usleep(20 * 1000);
     for (int i = 1; i <= steps; i++) {
@@ -209,7 +210,7 @@ static NSString *ly_screen_write_png(NSString *path) {
     if (!surf) return @"IOSurfaceCreate failed (entitlement com.apple.private.iosurface?)";
 
     uint32_t seed = 0;
-    int locked = p_lock(surf, 0, &seed);
+    (void)p_lock(surf, 0, &seed);   // 加锁失败不影响渲染，忽略返回值
 
     __block int rendered = -1;
     noff_try_objc(^{ rendered = p_render(0, CFSTR("LCD"), surf, 0, 0); });

@@ -270,8 +270,13 @@ static int apps_handler(int argc, char **argv,
             if (limit > 0 && (NSInteger)records.count >= limit) break;
         }
 
-        NSArray *sorted = [records sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-            return [(a[@"name"] ?: a[@"bundle_id"]) caseInsensitiveCompare:(b[@"name"] ?: b[@"bundle_id"])];
+        // NSComparator 的签名是 (id, id)；写成具体类型会触发
+        // "incompatible block pointer types" 编译错误，所以用 id 再在块内转型。
+        NSArray *sorted = [records sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+            NSDictionary *da = (NSDictionary *)a, *db = (NSDictionary *)b;
+            NSString *ka = da[@"name"] ?: da[@"bundle_id"];
+            NSString *kb = db[@"name"] ?: db[@"bundle_id"];
+            return [ka caseInsensitiveCompare:kb];
         }];
 
         NSDictionary *data = @{
