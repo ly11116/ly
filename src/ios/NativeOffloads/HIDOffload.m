@@ -809,28 +809,38 @@ static void ly_dbg(int fd) {
         CGSize sz = [UIScreen mainScreen].bounds.size;
         CGFloat sc = [UIScreen mainScreen].scale;
         int w = (int)(sz.width*sc), h = (int)(sz.height*sc);
-        // 逐个变体尝试：不同 iOS 版本对 IOSurface 属性要求不同
-        NSArray *variants = @[
-            @{ @"name": @"base",
-               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
-                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
-                        @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4) } },
-            @{ @"name": @"isGlobal",
-               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
-                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
-                        @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4),
-                        @"IOSurfaceIsGlobal": @YES } },
-            @{ @"name": @"noAllocSize",
-               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
-                        @"IOSurfaceBytesPerRow": @(w*4),
-                        @"IOSurfacePixelFormat": @(0x42475241) } },
-            @{ @"name": @"bgra8888",
-               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
-                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
-                        @"IOSurfacePixelFormat": @(0x42475241),
-                        @"IOSurfaceIsGlobal": @YES,
-                        @"IOSurfaceMemoryRegion": @"PurpleGfxMem" } },
-        ];
+        // ⚠️ 关键：IOSurfaceBytesPerRow 必须 64 字节对齐。
+        //   iPad 2388px 宽 × 4 = 9552，9552 % 64 = 16 → 不对齐 → IOSurfaceCreate 必返 NULL。
+        //   之前 4 个变体**全都传了同一个未对齐值**，所以全军覆没，与权限无关。
+        NSUInteger bprRaw     = (NSUInteger)w * 4;
+        NSUInteger bprAligned = (bprRaw + 63) & ~(NSUInteger)63;
+        ly_dbg_line(fd, @"  BytesPerRow: raw=%lu (%lu%%64) aligned=%lu",
+                    (unsigned long)bprRaw, (unsigned long)(bprRaw % 64), (unsigned long)bprAligned);
+
+        NSMutableArray *variants = [NSMutableArray array];
+
+        // 最优路径：只给宽高和像素格式，让系统自己算对齐（最不容易出错）
+        [variants addObject:@{ @"name": @"minimal(宽高+格式)", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h), @"IOSurfacePixelFormat": @(0x42475241) }) }];
+        // 对齐后的 bytesPerRow
+        [variants addObject:@{ @"name": @"aligned64", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprAligned),
+                @"IOSurfacePixelFormat": @(0x42475241) }) }];
+        // 只给 bytesPerRow 不给 pixelFormat
+        [variants addObject:@{ @"name": @"bprOnly", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerRow": @(bprAligned) }) }];
+        // 旧的未对齐（对照，验证假设）
+        [variants addObject:@{ @"name": @"unaligned(对照)", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprRaw),
+                @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4) }) }];
+        // 对齐 + isGlobal
+        [variants addObject:@{ @"name": @"aligned+isGlobal", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprAligned),
+                @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceIsGlobal": @YES }) }];
         __block void *surf = NULL;
         NSString *usedVariant = @"none";
         for (NSDictionary *v in variants) {
