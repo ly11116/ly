@@ -24,6 +24,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <stdarg.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <dlfcn.h>
 #import <mach/mach_time.h>
@@ -420,6 +421,7 @@ static NSString *const HELP_TEXT =
      "  apple-hid key <usage-hex|name>         e.g. 0x28(=enter) home\n"
      "  apple-hid screenshot <path>            Full screen, INCLUDING other apps\n"
      "  apple-hid ui [depth]                   Dump foreground app's accessibility UI tree\n"
+     "  apple-hid dbg                          Step-by-step capability diagnosis (plain text)\n"
      "                                         (labels + exact frames — better than screenshots)\n"
      "\n"
      "OPTIONS:\n"
@@ -609,6 +611,159 @@ static NSDictionary *ly_ax_capture(int depth, NSString *bundleID) {
         @"count": @(nodes.count),
         @"nodes": nodes,
     };
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  诊断：逐步骤打印（纯文本，便于直接阅读/截图）
+//  目的：不再靠猜，明确每个符号是否找到、来自哪个库、每步返回值
+// ══════════════════════════════════════════════════════════════════
+static void ly_dbg_line(int fd, NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *m = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    NSString *out = [m stringByAppendingString:@"\n"];
+    write(fd, out.UTF8String, strlen(out.UTF8String));
+}
+
+static void ly_dbg(int fd) {
+    ly_dbg_line(fd, @"════════ apple-hid 诊断 ════════");
+    ly_dbg_line(fd, @"UIDevice: %@  iOS %@", [[UIDevice currentDevice] model],
+                [[UIDevice currentDevice] systemVersion]);
+    ly_dbg_line(fd, @"屏幕: %.0fx%.0f pt, scale=%.1f", [UIScreen mainScreen].bounds.size.width,
+                [UIScreen mainScreen].bounds.size.height, [UIScreen mainScreen].scale);
+    ly_dbg_line(fd, @"已加载镜像数: %u", _dyld_image_count());
+
+    // ── 1) 符号逐项 ──
+    ly_dbg_line(fd, @"");
+    ly_dbg_line(fd, @"【1】符号解析");
+    struct { const char *name; const char *fw; } cands[] = {
+        {"_UICreateScreenUIImage",              NULL},
+        {"UICreateScreenUIImage",               NULL},
+        {"_UICreateScreenUIImageFromWindow",    NULL},
+        {"UIGraphicsCreateScreenUIImage",       NULL},
+        {"CARenderServerRenderDisplay",         "CoreGraphics"},
+        {"CARenderServerGetServerPort",         "CoreGraphics"},
+        {"CARenderServerRenderDisplaySync",     "CoreGraphics"},
+        {"IOSurfaceCreate",                     "IOSurface"},
+        {"IOSurfaceLock",                       "IOSurface"},
+        {"IOSurfaceGetBaseAddress",             "IOSurface"},
+        {"AXUIElementCreateSystemWide",         "AX"},
+        {"AXUIElementCreateApplication",        "AX"},
+        {"AXUIElementCopyAttributeValue",       "AX"},
+        {"AXUIElementSetAttributeValue",        "AX"},
+        {"AXUIElementPerformAction",            "AX"},
+        {"AXUIElementGetPid",                   "AX"},
+    };
+    void *hCG = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+    void *hIS = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+    if (!hIS) hIS = dlopen("/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+    void *hAX1 = dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities", RTLD_NOW);
+    void *hAX2 = dlopen("/System/Library/PrivateFrameworks/AccessibilityUIUtilities.framework/AccessibilityUIUtilities", RTLD_NOW);
+    void *hAX3 = dlopen("/System/Library/PrivateFrameworks/Accessibility.framework/Accessibility", RTLD_NOW);
+    void *hAX4 = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_NOW);
+    ly_dbg_line(fd, @"  dlopen CoreGraphics: %s", hCG ? "OK" : "FAIL");
+    ly_dbg_line(fd, @"  dlopen IOSurface:    %s", hIS ? "OK" : "FAIL");
+    ly_dbg_line(fd, @"  dlopen AccessibilityUtilities:   %s", hAX1 ? "OK" : "FAIL");
+    ly_dbg_line(fd, @"  dlopen AccessibilityUIUtilities: %s", hAX2 ? "OK" : "FAIL");
+    ly_dbg_line(fd, @"  dlopen Accessibility:            %s", hAX3 ? "OK" : "FAIL");
+    ly_dbg_line(fd, @"  dlopen ApplicationServices:      %s", hAX4 ? "OK" : "FAIL");
+
+    for (size_t i = 0; i < sizeof(cands)/sizeof(cands[0]); i++) {
+        void *h1 = NULL;
+        if (cands[i].fw && strcmp(cands[i].fw, "CoreGraphics") == 0) h1 = hCG;
+        if (cands[i].fw && strcmp(cands[i].fw, "IOSurface") == 0)    h1 = hIS;
+        if (cands[i].fw && strcmp(cands[i].fw, "AX") == 0)           h1 = hAX1 ? hAX1 : (hAX2 ? hAX2 : (hAX3 ? hAX3 : hAX4));
+        g_lastSymImage = nil;
+        void *p = ly_sym(cands[i].name, h1, NULL);
+        NSString *where = g_lastSymImage ? g_lastSymImage.lastPathComponent : @"-";
+        ly_dbg_line(fd, @"  %-32s %-10s %@", cands[i].name, p ? "FOUND" : "NOT FOUND", p ? where : @"");
+    }
+
+    // ── 2) 截图逐步骤 ──
+    ly_dbg_line(fd, @"");
+    ly_dbg_line(fd, @"【2】截图 S2 (CARenderServerRenderDisplay) 逐步骤");
+    fn_render_server_port p_port = (fn_render_server_port)ly_sym("CARenderServerGetServerPort", hCG, NULL);
+    ly_dbg_line(fd, @"  GetServerPort 符号: %s", p_port ? "有" : "无");
+    uint32_t sp = 0;
+    if (p_port) { __block uint32_t t = 0; noff_try_objc(^{ t = p_port(NULL); }); sp = t; }
+    ly_dbg_line(fd, @"  server port = %u %@", sp, sp ? @"(OK)" : @"(← 拿到 0，渲染调用必然失败)");
+
+    fn_iosurface_create p_c = (fn_iosurface_create)ly_sym("IOSurfaceCreate", hIS, NULL);
+    if (p_c) {
+        CGSize sz = [UIScreen mainScreen].bounds.size;
+        CGFloat sc = [UIScreen mainScreen].scale;
+        int w = (int)(sz.width*sc), h = (int)(sz.height*sc);
+        NSDictionary *props = @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+            @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
+            @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4) };
+        __block void *surf = NULL;
+        noff_try_objc(^{ surf = p_c((__bridge CFDictionaryRef)props); });
+        ly_dbg_line(fd, @"  IOSurfaceCreate(%dx%d) = %s", w, h, surf ? "OK" : "NULL ← 权限或参数问题");
+        if (surf) {
+            fn_iosurface_lock p_l = (fn_iosurface_lock)ly_sym("IOSurfaceLock", hIS, NULL);
+            fn_iosurface_base p_b = (fn_iosurface_base)ly_sym("IOSurfaceGetBaseAddress", hIS, NULL);
+            uint32_t seed = 0;
+            ly_dbg_line(fd, @"  IOSurfaceLock      = %s", p_l ? ((p_l(surf,0,&seed)==0) ? @"OK" : @"非0") : @"符号缺失");
+            void *base = p_b ? p_b(surf) : NULL;
+            ly_dbg_line(fd, @"  GetBaseAddress     = %s", base ? "OK" : "NULL");
+            fn_render_display p_r = (fn_render_display)ly_sym("CARenderServerRenderDisplay", hCG, NULL);
+            if (p_r) {
+                __block int rc = -999;
+                BOOL to = NO;
+                noff_dispatch_main_sync_timeout(3.0, &to, ^id{ rc = p_r(sp, CFSTR("LCD"), surf, 0, 0); return nil; });
+                ly_dbg_line(fd, @"  RenderDisplay(port=%u) = %d %@", sp, rc, to ? @"(超时)" : (rc==0?@"(OK)":@"(← 失败)"));
+            } else {
+                ly_dbg_line(fd, @"  RenderDisplay 符号缺失");
+            }
+        }
+    } else {
+        ly_dbg_line(fd, @"  IOSurfaceCreate 符号缺失");
+    }
+
+    ly_dbg_line(fd, @"");
+    ly_dbg_line(fd, @"【3】截图 S1 (_UICreateScreenUIImage)");
+    {
+        NSString *strat = nil;
+        UIImage *img = ly_capture_uiimage();
+        ly_dbg_line(fd, @"  结果: %s", img ? "拿到图" : "nil");
+        if (img) {
+            ly_dbg_line(fd, @"  尺寸: %.0fx%.0f  全黑=%s",
+                        CGImageGetWidth(img.CGImage), CGImageGetHeight(img.CGImage),
+                        ly_image_is_mostly_black(img) ? "是" : "否");
+        }
+        strat = nil;
+        UIImage *img2 = ly_capture_screen(&strat);
+        ly_dbg_line(fd, @"  总入口: %s (strategy=%@)", img2 ? "成功" : "失败", strat ?: @"none");
+    }
+
+    // ── 4) AX 逐步骤 ──
+    ly_dbg_line(fd, @"");
+    ly_dbg_line(fd, @"【4】辅助功能 AX");
+    BOOL axok = ly_ax_bootstrap();
+    ly_dbg_line(fd, @"  bootstrap: %s", axok ? "OK" : "符号缺失");
+    ly_dbg_line(fd, @"  CreateSystemWide: %s", p_ax_syswide ? "有" : "无");
+    ly_dbg_line(fd, @"  CreateApplication: %s", p_ax_app ? "有" : "无");
+    ly_dbg_line(fd, @"  CopyAttributeValue: %s", p_ax_copy ? "有" : "无");
+    if (axok && p_ax_syswide) {
+        AXUIElementRef sys = p_ax_syswide();
+        ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
+        if (sys) {
+            CFTypeRef v = NULL;
+            AXError e = p_ax_copy(sys, CFSTR("AXFocusedApplication"), &v);
+            ly_dbg_line(fd, @"  AXFocusedApplication 错误码 = %d %@", e,
+                        e==0 ? @"(OK)" : (e==-25211 ? @"(← APIDisabled，缺辅助功能权限)" :
+                                          (e==-25205 ? @"(← CannotComplete)" :
+                                           (e==-25203 ? @"(← InvalidUIElement)" : @""))));
+            if (v) {
+                int pid = p_ax_getpid ? p_ax_getpid((AXUIElementRef)v) : 0;
+                ly_dbg_line(fd, @"  前台 App pid = %d", pid);
+                NSDictionary *r = ly_ax_capture(3, nil);
+                ly_dbg_line(fd, @"  UI 树: ok=%@ count=%@ err=%@",
+                            r[@"ok"], r[@"count"], r[@"error"] ?: @"-");
+            }
+        }
+    }
+    ly_dbg_line(fd, @"════════ 诊断结束 ════════");
 }
 
 // ── 主处理 ──
@@ -806,6 +961,11 @@ static int hid_handler(int argc, char **argv,
 
         ly_key(usage, YES); usleep(20 * 1000); ly_key(usage, NO);
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub, @{@"key": k, @"usage": @(usage)}), compact, quiet);
+        return NOFF_EXIT_SUCCESS;
+    }
+
+    if ([sub isEqualToString:@"dbg"]) {
+        ly_dbg(stdout_fd);
         return NOFF_EXIT_SUCCESS;
     }
 
