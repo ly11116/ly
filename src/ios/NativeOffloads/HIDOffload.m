@@ -94,7 +94,9 @@ static BOOL ly_hid_bootstrap(void) {
 
     if (!p_create || !p_dispatch || !p_digi) return NO;
 
-    g_client = p_create(kCFAllocatorDefault);
+    __block IOHIDEventSystemClientRef client = NULL;
+    noff_try_objc(^{ client = p_create(kCFAllocatorDefault); });
+    g_client = client;
     if (!g_client) return NO;
     return YES;
 }
@@ -111,9 +113,12 @@ static NSString *ly_hid_reason(void) {
 // ── 触摸事件 ──
 static BOOL ly_touch_event(int finger, uint32_t mask, double x, double y) {
     if (!ly_hid_bootstrap()) return NO;
-    IOHIDEventRef ev = p_digi(kCFAllocatorDefault, mach_absolute_time(),
-                              kLyTransducerHand, 0, (uint32_t)finger, mask,
-                              x, y, 0, 0, 0, 0, 0, 0);
+    __block IOHIDEventRef ev = NULL;
+    noff_try_objc(^{
+        ev = p_digi(kCFAllocatorDefault, mach_absolute_time(),
+                    kLyTransducerHand, 0, (uint32_t)finger, mask,
+                    x, y, 0, 0, 0, 0, 0, 0);
+    });
     if (!ev) return NO;
     if (p_setint) p_setint(ev, kLyFieldIsDisplayIntegrated, 1);
     p_dispatch(g_client, ev);
@@ -343,7 +348,8 @@ static UIImage *ly_capture_render(void) {
     });
     if (timedOut2 || rendered != 0) return nil;
 
-    void *base = p_base(surf);
+    __block void *base = NULL;
+    noff_try_objc(^{ base = p_base(surf); });
     if (!base) return nil;
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
     CGBitmapInfo bi = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
@@ -591,7 +597,8 @@ static NSDictionary *ly_ax_capture(int depth, NSString *bundleID) {
     }
 
     if (p_ax_syswide) {
-        AXUIElementRef sys = p_ax_syswide();
+        __block AXUIElementRef sys = NULL;
+        noff_try_objc(^{ sys = p_ax_syswide(); });
         if (sys) {
             CFTypeRef focused = ly_ax_val(sys, CFSTR("AXFocusedApplication"));
             if (focused) { target = (AXUIElementRef)focused; }
@@ -714,7 +721,8 @@ static void ly_dbg(int fd) {
                     g_lastSymImage ? g_lastSymImage.lastPathComponent : @"");
     }
     if (axok && p_ax_syswide) {
-        AXUIElementRef sys = p_ax_syswide();
+        __block AXUIElementRef sys = NULL;
+        noff_try_objc(^{ sys = p_ax_syswide(); });
         ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
         if (sys) {
             __block CFTypeRef v = NULL;   // __block: 需在 block 内取地址
@@ -816,7 +824,8 @@ static void ly_dbg(int fd) {
             fn_iosurface_base p_b = (fn_iosurface_base)ly_sym("IOSurfaceGetBaseAddress", hIS, NULL);
             uint32_t seed = 0;
             ly_dbg_line(fd, @"  IOSurfaceLock      = %s", p_l ? ((p_l(surf,0,&seed)==0) ? @"OK" : @"非0") : @"符号缺失");
-            void *base = p_b ? p_b(surf) : NULL;
+            __block void *base = NULL;
+            if (p_b) { noff_try_objc(^{ base = p_b(surf); }); }
             ly_dbg_line(fd, @"  GetBaseAddress     = %s", base ? "OK" : "NULL");
             fn_render_display p_r = (fn_render_display)ly_sym("CARenderServerRenderDisplay", hCG, NULL);
             if (p_r) {
