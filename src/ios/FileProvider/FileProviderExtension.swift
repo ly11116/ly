@@ -13,9 +13,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     /// Root directory for all FileProvider-visible files in the App Group container.
     static var providerRoot: URL {
+        // 取不到 App Group 容器时回退到 Local 目录，而不是强制解包崩溃。
         let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
-        )!
+        ) ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

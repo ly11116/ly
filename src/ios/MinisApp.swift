@@ -166,20 +166,16 @@ struct MinisApp: App {
         // .onAppear refresh) locks the sidebar title to the default even when the
         // user set a custom name. refreshCache() only reads the tiny SOUL.md file.
         SoulStore.refreshCache()
-        // [ly-ios16-lite] Deferred: KaTeX WKWebView warm-up is too heavy during
-        // cold launch on iOS 16.6.1; it can trigger pmap_enter pressure before
-        // the first frame. It is initialized lazily on first formula render.
-        // KaTeXRenderer.shared.warmUp()
+        // Pre-warm KaTeX WKWebView as fallback for formulas SwiftMath can't render
+        KaTeXRenderer.shared.warmUp()
         // Pre-warm the biometric capability probe off the main thread. The
         // first LAContext.canEvaluatePolicy call cold-starts the
         // LocalAuthentication XPC daemon (~500 ms); without this it would run
         // inline on the first sessionContextMenu builder during scroll and
         // hang a frame. (T-ios-biometric-probe-scroll-hang)
         BiometricAuth.prewarm()
-        // [ly-ios16-lite] Defer cross-process Live Activity cleanup until the
-        // app is interactive; doing it from App.init adds an avoidable launch
-        // allocation spike on iOS 16.
-        // AgentLiveActivityManager.shared.cleanupStaleActivities(source: "MinisApp.init")
+        // Clean up Live Activities left over from a previous app session (e.g. app was killed)
+        AgentLiveActivityManager.shared.cleanupStaleActivities(source: "MinisApp.init")
         // Start screen-awake controller — it will observe running tasks
         // + the user's opt-in flag and toggle the idle timer accordingly.
         Task { @MainActor in KeepScreenAwakeController.shared.start() }
@@ -1049,7 +1045,15 @@ struct MinisApp: App {
     private static func migrateSharedDirToAppGroup() {
         let fm = FileManager.default
         let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app")!
+        // 不要强制解包：App Group 容器在某些签名/权限配置下会取不到，
+        // 强制解包会直接 brk #1（实测过启动 SIGTRAP）。取不到就跳过迁移，
+        // 让 App 能正常起来，由用户在设置里处理。
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else {
+            // 这里在 static func 内，无文件级 logger 可用，用 NSLog 保持可观测。
+            NSLog("[MigrateSharedDir] app group 容器不可用，跳过共享目录迁移")
+            return
+        }
 
         let migrations: [(source: URL, dest: URL, label: String)] = [
             // Legacy Library/MinisChat/shared → new shared

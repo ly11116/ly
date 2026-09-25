@@ -38,13 +38,15 @@ workflows:
           # 断言签名清单里有新功能所需的权限。
           # 注意：这里不再断言 platform-application —— 它是导致启动 SIGTRAP 的
           # 激进权限之一，已从清单移除。
-          /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups" signing/TrollStore-entitlements.plist
-          /usr/libexec/PlistBuddy -c "Print :com.apple.private.hid.client.event-dispatch" signing/TrollStore-entitlements.plist
-          /usr/libexec/PlistBuddy -c "Print :com.apple.private.iosurface" signing/TrollStore-entitlements.plist
-          if /usr/libexec/PlistBuddy -c "Print :platform-application" signing/TrollStore-entitlements.plist 2>/dev/null; then
-            echo "FATAL: 签名清单里仍有 platform-application（已知导致启动崩溃）"; exit 1
-          fi
-          echo "  ✓ 权限清单符合预期"
+          # 断言：App 自带 entitlements 必须同时具备
+          #   - group.com.openminis.app（代码硬编码的 app group，缺则启动 SIGTRAP）
+          #   - HID / iosurface / mobileinstall SPI（新功能所需）
+          /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups" src/ios/Minis.entitlements
+          /usr/libexec/PlistBuddy -c "Print :com.apple.private.hid.client.event-dispatch" src/ios/Minis.entitlements
+          /usr/libexec/PlistBuddy -c "Print :com.apple.private.iosurface" src/ios/Minis.entitlements
+          grep -q "group.com.openminis.app" src/ios/Minis.entitlements \
+            || { echo "FATAL: Minis.entitlements 缺 group.com.openminis.app"; exit 1; }
+          echo "  ✓ entitlements 符合预期（含 app group + HID + iosurface）"
 
       - name: Prepare xcconfig
         script: |
