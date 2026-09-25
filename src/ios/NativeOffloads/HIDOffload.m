@@ -480,10 +480,17 @@ static BOOL ly_ax_bootstrap(void) {
         g_ax = dlopen(fw[i], RTLD_NOW);
     }
     p_ax_app     = (fn_ax_create_app)    ly_sym("AXUIElementCreateApplication", g_ax, NULL);
+    if (!p_ax_app) p_ax_app = (fn_ax_create_app)ly_sym("_AXUIElementCreateApplication", g_ax, NULL);
     p_ax_syswide = (fn_ax_create_syswide)ly_sym("AXUIElementCreateSystemWide", g_ax, NULL);
+    if (!p_ax_syswide) p_ax_syswide = (fn_ax_create_syswide)ly_sym("_AXUIElementCreateSystemWide", g_ax, NULL);
     p_ax_copy    = (fn_ax_copy_attr)     ly_sym("AXUIElementCopyAttributeValue", g_ax, NULL);
+    if (!p_ax_copy) p_ax_copy = (fn_ax_copy_attr)ly_sym("_AXUIElementCopyAttributeValue", g_ax, NULL);
     p_ax_getpid  = (fn_ax_get_pid)       ly_sym("AXUIElementGetPid", g_ax, NULL);
-    return p_ax_app != NULL && p_ax_copy != NULL;
+
+    // 修正：此前要求 AXUIElementCreateApplication 存在才认为可用，
+    // 但实测 iOS 16.6.1 上该符号 NOT FOUND，而 CreateSystemWide 是 FOUND。
+    // 从 SystemWide 取 AXFocusedApplication 就能拿到前台 App，足够用。
+    return (p_ax_syswide != NULL) && (p_ax_copy != NULL);
 }
 
 // 供 probe 用：渲染 server port 是否可用（避免重复实现）
@@ -680,6 +687,51 @@ static void ly_dbg(int fd) {
         ly_dbg_line(fd, @"  %-32s %-10s %@", cands[i].name, p ? "FOUND" : "NOT FOUND", p ? where : @"");
     }
 
+    // ── 4) AX 逐步骤 ──
+    ly_dbg_line(fd, @"");
+    ly_dbg_line(fd, @"【4】辅助功能 AX");
+    BOOL axok = ly_ax_bootstrap();
+    ly_dbg_line(fd, @"  bootstrap: %s", axok ? "OK" : "SYMBOLS MISSING");
+    ly_dbg_line(fd, @"  CreateSystemWide: %s", p_ax_syswide ? "有" : "无");
+    ly_dbg_line(fd, @"  CreateApplication: %s", p_ax_app ? "有" : "无");
+    ly_dbg_line(fd, @"  CopyAttributeValue: %s", p_ax_copy ? "有" : "无");
+    // 多个候选入口逐个试
+    ly_dbg_line(fd, @"  候选入口逐个试：");
+    for (int i = 1; i <= 6; i++) {
+        NSString *nm = nil; void *h = NULL;
+        switch (i) {
+            case 1: nm = @"AXUIElementCreateSystemWide"; h = g_ax; break;
+            case 2: nm = @"AXUIElementCreateApplication"; h = g_ax; break;
+            case 3: nm = @"_AXUIElementCreateWithRemoteToken"; h = g_ax; break;
+            case 4: nm = @"AXUIElementCreateWithRemoteToken"; h = g_ax; break;
+            case 5: nm = @"AXUIElementCopyAttributeValue"; h = g_ax; break;
+            case 6: nm = @"AXUIElementPerformAction"; h = g_ax; break;
+        }
+        g_lastSymImage = nil;
+        void *pp = ly_sym(nm.UTF8String, h, NULL);
+        ly_dbg_line(fd, @"    %-36s %-10s %@", nm,
+                    pp ? @"FOUND" : @"NOT FOUND",
+                    g_lastSymImage ? g_lastSymImage.lastPathComponent : @"");
+    }
+    if (axok && p_ax_syswide) {
+        AXUIElementRef sys = p_ax_syswide();
+        ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
+        if (sys) {
+            CFTypeRef v = NULL;
+            AXError e = p_ax_copy(sys, CFSTR("AXFocusedApplication"), &v);
+            ly_dbg_line(fd, @"  AXFocusedApplication 错误码 = %d %@", e,
+                        e==0 ? @"(OK)" : (e==-25211 ? @"(← APIDisabled，缺辅助功能权限)" :
+                                          (e==-25205 ? @"(← CannotComplete)" :
+                                           (e==-25203 ? @"(← InvalidUIElement)" : @""))));
+            if (v) {
+                int pid = p_ax_getpid ? p_ax_getpid((AXUIElementRef)v) : 0;
+                ly_dbg_line(fd, @"  前台 App pid = %d", pid);
+                NSDictionary *r = ly_ax_capture(3, nil);
+                ly_dbg_line(fd, @"  UI 树: ok=%@ count=%@ err=%@",
+                            r[@"ok"], r[@"count"], r[@"error"] ?: @"-");
+            }
+        }
+    }
     // ── 2) 截图逐步骤 ──
     ly_dbg_line(fd, @"");
     ly_dbg_line(fd, @"【2】截图 S2 (CARenderServerRenderDisplay) 逐步骤");
@@ -721,12 +773,34 @@ static void ly_dbg(int fd) {
         for (NSDictionary *v in variants) {
             __block void *s2 = NULL;
             NSDictionary *props = v[@"p"];
-            noff_try_objc(^{ s2 = p_c((__bridge CFDictionaryRef)props); });
+            // IOSurface 创建也放主线程试一次（某些版本要求在 UI 线程）
+            BOOL to0 = NO;
+            noff_dispatch_main_sync_timeout(2.0, &to0, ^id{
+                noff_try_objc(^{ s2 = p_c((__bridge CFDictionaryRef)props); });
+                return nil;
+            });
             ly_dbg_line(fd, @"  IOSurfaceCreate[%@](%dx%d) = %s", v[@"name"], w, h,
                         s2 ? "OK <<<" : "NULL");
             if (s2 && !surf) { surf = s2; usedVariant = v[@"name"]; }
         }
         ly_dbg_line(fd, @"  选用的变体: %@", usedVariant);
+        // 无论 IOSurface 是否创建成功，都测一遍 Snapshot ——
+        // 它不需要自己建 surface，是绕开当前卡点的最可能路径。
+        {
+            typedef CFTypeRef (*fn_snapshot)(uint32_t, CFStringRef);
+            fn_snapshot p_snap = (fn_snapshot)ly_sym("CARenderServerSnapshot", hCG, NULL);
+            if (!p_snap) p_snap = (fn_snapshot)ly_sym("CARenderServerCreateSnapshot", hCG, NULL);
+            ly_dbg_line(fd, @"  CARenderServerSnapshot 符号: %s", p_snap ? "YES" : "NO");
+            if (p_snap) {
+                __block CFTypeRef shot = NULL;
+                BOOL to2 = NO;
+                noff_dispatch_main_sync_timeout(3.0, &to2, ^id{ shot = p_snap(sp, CFSTR("LCD")); return nil; });
+                ly_dbg_line(fd, @"  Snapshot(port=%u) = %s", sp,
+                            shot ? "GOT OBJECT <<< this path works" : "NULL");
+                if (shot) CFRelease(shot);
+            }
+        }
+
         if (surf) {
             fn_iosurface_lock p_l = (fn_iosurface_lock)ly_sym("IOSurfaceLock", hIS, NULL);
             fn_iosurface_base p_b = (fn_iosurface_base)ly_sym("IOSurfaceGetBaseAddress", hIS, NULL);
@@ -734,19 +808,6 @@ static void ly_dbg(int fd) {
             ly_dbg_line(fd, @"  IOSurfaceLock      = %s", p_l ? ((p_l(surf,0,&seed)==0) ? @"OK" : @"非0") : @"符号缺失");
             void *base = p_b ? p_b(surf) : NULL;
             ly_dbg_line(fd, @"  GetBaseAddress     = %s", base ? "OK" : "NULL");
-            // 另一条路：CARenderServerSnapshot 直接返回 CGImage，无需自己建 IOSurface
-            typedef CFTypeRef (*fn_snapshot)(uint32_t, CFStringRef);
-            fn_snapshot p_snap = (fn_snapshot)ly_sym("CARenderServerSnapshot", hCG, NULL);
-            if (!p_snap) p_snap = (fn_snapshot)ly_sym("CARenderServerCreateSnapshot", hCG, NULL);
-            ly_dbg_line(fd, @"  CARenderServerSnapshot 符号: %s", p_snap ? "有" : "无");
-            if (p_snap) {
-                __block CFTypeRef shot = NULL;
-                BOOL to2 = NO;
-                noff_dispatch_main_sync_timeout(3.0, &to2, ^id{ shot = p_snap(sp, CFSTR("LCD")); return nil; });
-                ly_dbg_line(fd, @"  Snapshot(port=%u) = %s", sp, shot ? "拿到对象 <<< 这条路可行" : "NULL");
-                if (shot) CFRelease(shot);
-            }
-
             fn_render_display p_r = (fn_render_display)ly_sym("CARenderServerRenderDisplay", hCG, NULL);
             if (p_r) {
                 __block int rc = -999;
@@ -777,51 +838,6 @@ static void ly_dbg(int fd) {
         ly_dbg_line(fd, @"  总入口: %s (strategy=%@)", img2 ? "成功" : "失败", strat ?: @"none");
     }
 
-    // ── 4) AX 逐步骤 ──
-    ly_dbg_line(fd, @"");
-    ly_dbg_line(fd, @"【4】辅助功能 AX");
-    BOOL axok = ly_ax_bootstrap();
-    ly_dbg_line(fd, @"  bootstrap: %s", axok ? "OK" : "符号缺失");
-    ly_dbg_line(fd, @"  CreateSystemWide: %s", p_ax_syswide ? "有" : "无");
-    ly_dbg_line(fd, @"  CreateApplication: %s", p_ax_app ? "有" : "无");
-    ly_dbg_line(fd, @"  CopyAttributeValue: %s", p_ax_copy ? "有" : "无");
-    // 多个候选入口逐个试
-    ly_dbg_line(fd, @"  候选入口逐个试：");
-    for (int i = 1; i <= 6; i++) {
-        NSString *nm = nil; void *h = NULL;
-        switch (i) {
-            case 1: nm = @"AXUIElementCreateSystemWide"; h = g_ax; break;
-            case 2: nm = @"AXUIElementCreateApplication"; h = g_ax; break;
-            case 3: nm = @"_AXUIElementCreateWithRemoteToken"; h = g_ax; break;
-            case 4: nm = @"AXUIElementCreateWithRemoteToken"; h = g_ax; break;
-            case 5: nm = @"AXUIElementCopyAttributeValue"; h = g_ax; break;
-            case 6: nm = @"AXUIElementPerformAction"; h = g_ax; break;
-        }
-        g_lastSymImage = nil;
-        void *pp = ly_sym(nm.UTF8String, h, NULL);
-        ly_dbg_line(fd, @"    %-36s %-10s %@", nm,
-                    pp ? @"FOUND" : @"NOT FOUND",
-                    g_lastSymImage ? g_lastSymImage.lastPathComponent : @"");
-    }
-    if (axok && p_ax_syswide) {
-        AXUIElementRef sys = p_ax_syswide();
-        ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
-        if (sys) {
-            CFTypeRef v = NULL;
-            AXError e = p_ax_copy(sys, CFSTR("AXFocusedApplication"), &v);
-            ly_dbg_line(fd, @"  AXFocusedApplication 错误码 = %d %@", e,
-                        e==0 ? @"(OK)" : (e==-25211 ? @"(← APIDisabled，缺辅助功能权限)" :
-                                          (e==-25205 ? @"(← CannotComplete)" :
-                                           (e==-25203 ? @"(← InvalidUIElement)" : @""))));
-            if (v) {
-                int pid = p_ax_getpid ? p_ax_getpid((AXUIElementRef)v) : 0;
-                ly_dbg_line(fd, @"  前台 App pid = %d", pid);
-                NSDictionary *r = ly_ax_capture(3, nil);
-                ly_dbg_line(fd, @"  UI 树: ok=%@ count=%@ err=%@",
-                            r[@"ok"], r[@"count"], r[@"error"] ?: @"-");
-            }
-        }
-    }
     ly_dbg_line(fd, @"════════ 诊断结束 ════════");
 }
 
