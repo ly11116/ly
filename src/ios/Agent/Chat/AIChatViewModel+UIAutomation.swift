@@ -130,12 +130,11 @@ extension AIChatViewModel {
             //   而 HID 触控注入是可用的 —— 于是改走：
             //     注入「音量上 + 电源」→ iOS 自己截图 → 存相册 → apple-photos export
             //   这条链路每一环都已实测可用，且不依赖 IOSurface / AX。
-            let shotPath = "/var/minis/attachments/ui_step\(step).png"
-            let shot = await Self.captureViaSystemScreenshot(
-                toGuestPath: shotPath, run: { await self.runNative($0) })
+            let shot = await Self.captureViaSystemScreenshot(run: { await self.runNative($0) })
+            let shotPath: String
             switch shot {
-            case .ok:
-                break
+            case .ok(let p):
+                shotPath = p
             case .failed(let why):
                 trace.append("step \(step): 截图失败 → \(why)")
                 return FileToolResult(output: trace.joined(separator: "\n"), success: false)
@@ -331,47 +330,70 @@ extension AIChatViewModel {
     // MARK: - 截图（系统截图 + 相册导出）
 
     enum CaptureOutcome {
-        case ok
+        case ok(String)                 // 导出的 guest 路径
         case failed(String)
     }
 
-    /// 让 iOS 自己截图，再从相册导出到 guest 路径。
-    /// 走这条路是因为 IOSurface / AX 在本机被用户态服务拒绝，而 HID 可用。
+    /// 让 iOS 自己截图，再从相册导出。
+    ///
+    /// 为什么不用 apple-hid screenshot：本机 IOSurfaceCreate 全部 8 个变体返回 NULL，
+    /// _UICreateScreenUIImage 返 nil，CARenderServerSnapshot 返 NULL，
+    /// AX 全部错误码 -25216（用户态服务有各自的信任检查，TrollStore 骗不过）。
+    /// 而 HID 触控注入可用 —— 于是改走「注入硬件键让系统自己截图」。
+    ///
+    /// ⚠️ apple-photos export 的输出目录是**硬编码** /var/minis/offloads，
+    ///    不接受 --path，且扩展名由资源原始文件名决定（png/heic/jpg 不定）。
+    ///    所以必须从它返回的 JSON 里读 data.path，不能自己拼路径。
     static func captureViaSystemScreenshot(
-        toGuestPath guestPath: String,
         run: (String) async -> (output: String, exit: Int)
     ) async -> CaptureOutcome {
 
-        // 记录触发前的最新一张，避免误取到旧截图
+        // 1) 记下触发前相册最新 id，避免误取旧图
         let before = await Self.latestPhotoId(run: run)
 
-        // 1) 注入 音量上 + 电源
+        // 2) 注入 音量上 + 电源
         let trig = await run("apple-hid systshot")
         if trig.exit != 0 {
             return .failed("systshot exit=\(trig.exit) \(trig.output.prefix(160))")
         }
 
-        // 2) 轮询相册，等新截图出现（最多 ~6s）
+        // 3) 轮询相册，等新截图出现（最多 ~8s）
         var newId: String? = nil
-        for _ in 0..<12 {
+        for _ in 0..<16 {
             try? await Task.sleep(nanoseconds: 500_000_000)
-            let cur = await Self.latestPhotoId(run: run)
-            if let c = cur, c != before { newId = c; break }
+            if let c = await Self.latestPhotoId(run: run), c != before { newId = c; break }
         }
         guard let assetId = newId else {
-            return .failed("系统截图未出现在相册（可能被「屏幕使用时间」或权限拦截）")
+            return .failed("系统截图未出现在相册（可能被屏幕使用时间/权限拦截）")
         }
 
-        // 3) 导出到 guest 路径
-        let exp = await run("apple-photos export --id \(Self.shellQuote(assetId)) --size original --path \(Self.shellQuote(guestPath))")
+        // 4) 导出（不带 --path；输出固定落在 /var/minis/offloads）
+        let exp = await run("apple-photos export --id \(Self.shellQuote(assetId)) --size original")
         if exp.exit != 0 {
-            // 有的版本 export 用 --dest / 位置参数，退一步再试
-            let exp2 = await run("apple-photos export --id \(Self.shellQuote(assetId)) \(Self.shellQuote(guestPath))")
-            if exp2.exit != 0 {
-                return .failed("export exit=\(exp.exit) \(exp.output.prefix(160))")
-            }
+            return .failed("export exit=\(exp.exit) \(exp.output.prefix(160))")
         }
-        return .ok
+
+        // 5) 从返回 JSON 读 data.path（扩展名运行时才定，不能自己拼）
+        if let path = Self.extractExportPath(from: exp.output) { return .ok(path) }
+
+        // 6) 兜底：按 safeId 前缀扫 offloads（与 export 的命名规则一致：
+        //    把 assetId 里非字母数字字符替换成 _）
+        let safeId = assetId.components(separatedBy: CharacterSet.alphanumerics.inverted)
+                           .joined(separator: "_")
+        let ls = await run("ls -t /var/minis/offloads/ | grep -F \(Self.shellQuote(safeId)) | head -1")
+        let f = ls.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !f.isEmpty { return .ok("/var/minis/offloads/\(f)") }
+
+        return .failed("export 成功但找不到输出文件（期望前缀 \(safeId)）")
+    }
+
+    /// 从 apple-photos export 的 JSON 输出里取 data.path
+    static func extractExportPath(from raw: String) -> String? {
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}"),
+              let data = String(raw[start...end]).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let payload = (obj["data"] as? [String: Any]) ?? obj
+        return payload["path"] as? String
     }
 
     /// 取相册最新一张的 localIdentifier
