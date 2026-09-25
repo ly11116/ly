@@ -717,8 +717,9 @@ static void ly_dbg(int fd) {
         AXUIElementRef sys = p_ax_syswide();
         ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
         if (sys) {
-            CFTypeRef v = NULL;
-            AXError e = p_ax_copy(sys, CFSTR("AXFocusedApplication"), &v);
+            __block CFTypeRef v = NULL;   // __block: 需在 block 内取地址
+            __block AXError e = -1;
+            noff_try_objc(^{ e = p_ax_copy(sys, CFSTR("AXFocusedApplication"), &v); });
             ly_dbg_line(fd, @"  AXFocusedApplication 错误码 = %d %@", e,
                         e==0 ? @"(OK)" : (e==-25211 ? @"(← APIDisabled，缺辅助功能权限)" :
                                           (e==-25205 ? @"(← CannotComplete)" :
@@ -787,15 +788,24 @@ static void ly_dbg(int fd) {
         // 无论 IOSurface 是否创建成功，都测一遍 Snapshot ——
         // 它不需要自己建 surface，是绕开当前卡点的最可能路径。
         {
-            typedef CFTypeRef (*fn_snapshot)(uint32_t, CFStringRef);
+            // ⚠️ 崩溃教训：真实签名是
+            //     CARenderServerSnapshot_(uint32_t port, NSDictionary *options)
+            //   第二个参数是 **NSDictionary**，不是 CFStringRef。
+            //   之前传 CFSTR("LCD") 会被当字典用 → unrecognized selector
+            //   → objc_exception_throw → std::terminate → SIGABRT。
+            //   现在传 @{}，并且整段用 noff_try_objc 兜住异常。
+            typedef CFTypeRef (*fn_snapshot)(uint32_t, NSDictionary *);
             fn_snapshot p_snap = (fn_snapshot)ly_sym("CARenderServerSnapshot", hCG, NULL);
             if (!p_snap) p_snap = (fn_snapshot)ly_sym("CARenderServerCreateSnapshot", hCG, NULL);
             ly_dbg_line(fd, @"  CARenderServerSnapshot 符号: %s", p_snap ? "YES" : "NO");
             if (p_snap) {
                 __block CFTypeRef shot = NULL;
                 BOOL to2 = NO;
-                noff_dispatch_main_sync_timeout(3.0, &to2, ^id{ shot = p_snap(sp, CFSTR("LCD")); return nil; });
-                ly_dbg_line(fd, @"  Snapshot(port=%u) = %s", sp,
+                noff_dispatch_main_sync_timeout(3.0, &to2, ^id{
+                    noff_try_objc(^{ shot = p_snap(sp, @{}); });
+                    return nil;
+                });
+                ly_dbg_line(fd, @"  Snapshot(port=%u, @{}) = %s", sp,
                             shot ? "GOT OBJECT <<< this path works" : "NULL");
                 if (shot) CFRelease(shot);
             }
@@ -842,8 +852,32 @@ static void ly_dbg(int fd) {
 }
 
 // ── 主处理 ──
+/// 真正的实现；外面包一层 ObjC 异常兜底
+static int hid_handler_inner(int argc, char **argv,
+                             int stdin_fd, int stdout_fd, int stderr_fd);
+
 static int hid_handler(int argc, char **argv,
                        int stdin_fd, int stdout_fd, int stderr_fd) {
+    // 子命令内部的实验性私有 API 调用可能抛 ObjC 异常。
+    // 未捕获的 ObjC 异常会走到 std::terminate → abort() → SIGABRT 把整个 App 杀掉。
+    // 这里统一兜住，让失败退化成一条错误信息而不是崩溃。
+    __block int rc = -1;
+    __block NSString *err = nil;
+    @try {
+        rc = hid_handler_inner(argc, argv, stdin_fd, stdout_fd, stderr_fd);
+    } @catch (NSException *ex) {
+        err = [NSString stringWithFormat:@"%@: %@", ex.name, ex.reason];
+    }
+    if (err) {
+        NSString *m = [NSString stringWithFormat:@"ERROR: Caught ObjC exception: %@\n", err];
+        write(stdout_fd, m.UTF8String, strlen(m.UTF8String));
+        return 1;
+    }
+    return rc;
+}
+
+static int hid_handler_inner(int argc, char **argv,
+                             int stdin_fd, int stdout_fd, int stderr_fd) {
     if (noff_has_flag(argc, argv, "--help") || noff_has_flag(argc, argv, "-h")) {
         noff_emit_help(stderr_fd, HELP_TEXT);
         return NOFF_EXIT_SUCCESS;
