@@ -55,6 +55,7 @@ typedef IOHIDEventRef (*fn_create_digitizer)(CFAllocatorRef, uint64_t, IOHIDDigi
 typedef IOHIDEventRef (*fn_create_keyboard)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t);
 typedef void  (*fn_event_set_int)(IOHIDEventRef, uint32_t, CFIndex);
 typedef int   (*fn_render_display)(uint32_t, CFStringRef, void *surface, uint32_t, uint32_t);
+typedef uint32_t (*fn_render_server_port)(void *);
 typedef void *(*fn_iosurface_create)(CFDictionaryRef);
 typedef int   (*fn_iosurface_lock)(void *, uint32_t, uint32_t *);
 typedef void *(*fn_iosurface_base)(void *);
@@ -65,6 +66,13 @@ static fn_create_digitizer  p_digi = NULL;
 static fn_create_keyboard   p_kbd = NULL;
 static fn_event_set_int     p_setint = NULL;
 static void                *g_iokit = NULL;
+
+#ifndef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
 
 static NSString *const TOOL_NAME = @"apple-hid";
 
@@ -261,9 +269,16 @@ static UIImage *ly_capture_uiimage(void) {
     static BOOL probed = NO;
     if (!probed) {
         probed = YES;
-        // 有的系统上符号带下划线前缀的变体，逐个试
-        p = (fn_create_screen_uiimage)ly_sym("_UICreateScreenUIImage", NULL, NULL);
-        if (!p) p = (fn_create_screen_uiimage)ly_sym("UIGraphicsCreateScreenUIImage", NULL, NULL);
+        // 不同 iOS 版本 / 不同框架导出名不一致，逐个候选试
+        static const char *cands[] = {
+            "_UICreateScreenUIImage",
+            "UICreateScreenUIImage",
+            "_UICreateScreenUIImageFromWindow",
+            "UIGraphicsCreateScreenUIImage",
+        };
+        for (size_t i = 0; i < sizeof(cands)/sizeof(cands[0]) && !p; i++) {
+            p = (fn_create_screen_uiimage)ly_sym(cands[i], NULL, NULL);
+        }
     }
     if (!p) return nil;
     // UIKit 截图 API 应在主线程调用；用带超时的变体避免
@@ -288,6 +303,17 @@ static UIImage *ly_capture_render(void) {
     fn_iosurface_create p_create = (fn_iosurface_create)ly_sym("IOSurfaceCreate", is, NULL);
     fn_iosurface_lock   p_lock   = (fn_iosurface_lock)  ly_sym("IOSurfaceLock", is, NULL);
     fn_iosurface_base   p_base   = (fn_iosurface_base)  ly_sym("IOSurfaceGetBaseAddress", is, NULL);
+    // 关键：CARenderServerRenderDisplay 的第一个参数必须是真实 server port，
+    // 直接传 0 在多数版本上会失败（这就是之前截图全挂的原因之一）。
+    fn_render_server_port p_port =
+        (fn_render_server_port)ly_sym("CARenderServerGetServerPort", cg, NULL);
+    uint32_t server = 0;
+    if (p_port) {
+        __block uint32_t sp = 0;
+        noff_try_objc(^{ sp = p_port(NULL); });
+        server = sp;
+    }
+
     if (!p_render || !p_create || !p_lock || !p_base) return nil;
 
     CGSize sz = [UIScreen mainScreen].bounds.size;
@@ -310,7 +336,7 @@ static UIImage *ly_capture_render(void) {
     __block int rendered = -1;
     BOOL timedOut2 = NO;
     noff_dispatch_main_sync_timeout(3.0, &timedOut2, ^id{
-        rendered = p_render(0, CFSTR("LCD"), surf, 0, 0);
+        rendered = p_render(server, CFSTR("LCD"), surf, 0, 0);
         return nil;
     });
     if (timedOut2 || rendered != 0) return nil;
@@ -328,6 +354,16 @@ static UIImage *ly_capture_render(void) {
     UIImage *img = [UIImage imageWithCGImage:cgimg];
     CGImageRelease(cgimg);
     return img;
+}
+
+/// 渲染 server port 是否可用（probe 用）
+static BOOL ly_render_server_available(void) {
+    void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+    fn_render_server_port p = (fn_render_server_port)ly_sym("CARenderServerGetServerPort", cg, NULL);
+    if (!p) return NO;
+    __block uint32_t sp = 0;
+    noff_try_objc(^{ sp = p(NULL); });
+    return sp != 0;
 }
 
 /// 统一入口：返回 (image, strategyName)
@@ -383,6 +419,8 @@ static NSString *const HELP_TEXT =
      "  apple-hid paste <text>                 Set clipboard then Cmd+V (any text)\n"
      "  apple-hid key <usage-hex|name>         e.g. 0x28(=enter) home\n"
      "  apple-hid screenshot <path>            Full screen, INCLUDING other apps\n"
+     "  apple-hid ui [depth]                   Dump foreground app's accessibility UI tree\n"
+     "                                         (labels + exact frames — better than screenshots)\n"
      "\n"
      "OPTIONS:\n"
      "  --help, -h       Show this help message\n"
@@ -398,6 +436,180 @@ static NSString *const HELP_TEXT =
      "\n"
      "NOTE: requires TrollStore (巨魔) install — private HID entitlements are\n"
      "      rejected under a normal signature. Run `probe` first.\n";
+
+// ══════════════════════════════════════════════════════════════════
+//  辅助功能(AX)读 UI 树
+//
+//  比截图 + 视觉模型更好的路子：
+//    - 直接拿到控件的 label / role / 精确 frame，不用猜坐标
+//    - 不花 token、不受网络影响
+//    - 屏幕内容变化时元素树同步变化
+//  这是把"驱动别的 App"做稳的关键。若 AX 不可用才退回截图。
+// ══════════════════════════════════════════════════════════════════
+
+typedef struct __AXUIElement *AXUIElementRef;
+typedef int AXError;
+
+#define kAXErrorSuccess 0u
+
+typedef AXUIElementRef (*fn_ax_create_app)(int pid);
+typedef AXUIElementRef (*fn_ax_create_syswide)(void);
+typedef AXError (*fn_ax_copy_attr)(AXUIElementRef, CFStringRef, CFTypeRef *);
+typedef AXError (*fn_ax_copy_attr_names)(AXUIElementRef, CFArrayRef *);
+typedef int      (*fn_ax_get_pid)(AXUIElementRef);
+
+static void *g_ax = NULL;
+static fn_ax_create_app      p_ax_app = NULL;
+static fn_ax_create_syswide  p_ax_syswide = NULL;
+static fn_ax_copy_attr       p_ax_copy = NULL;
+static fn_ax_get_pid         p_ax_getpid = NULL;
+
+static BOOL ly_ax_bootstrap(void) {
+    if (p_ax_app || p_ax_copy) return YES;
+    if (g_ax) return YES;
+    // 三个可能的框架都试；AX 符号在不同系统上位置不同
+    const char *fw[] = {
+        "/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities",
+        "/System/Library/PrivateFrameworks/AccessibilityUIUtilities.framework/AccessibilityUIUtilities",
+        "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
+    };
+    for (size_t i = 0; i < sizeof(fw)/sizeof(fw[0]) && !g_ax; i++) {
+        g_ax = dlopen(fw[i], RTLD_NOW);
+    }
+    p_ax_app     = (fn_ax_create_app)    ly_sym("AXUIElementCreateApplication", g_ax, NULL);
+    p_ax_syswide = (fn_ax_create_syswide)ly_sym("AXUIElementCreateSystemWide", g_ax, NULL);
+    p_ax_copy    = (fn_ax_copy_attr)     ly_sym("AXUIElementCopyAttributeValue", g_ax, NULL);
+    p_ax_getpid  = (fn_ax_get_pid)       ly_sym("AXUIElementGetPid", g_ax, NULL);
+    return p_ax_app != NULL && p_ax_copy != NULL;
+}
+
+// 供 probe 用：渲染 server port 是否可用（避免重复实现）
+static BOOL ly_render_server_available(void);
+
+/// 取 AX 属性（返回已 +1 的 CFTypeRef，调用方需 CFRelease）
+static CFTypeRef ly_ax_val(AXUIElementRef el, CFStringRef attr) {
+    if (!el || !p_ax_copy) return NULL;
+    __block CFTypeRef v = NULL;   // __block: 需要在 block 里取地址写入
+    __block AXError e = 1;
+    noff_try_objc(^{ e = p_ax_copy(el, attr, &v); });
+    if (e != kAXErrorSuccess) return NULL;
+    return v;
+}
+
+static NSString *ly_ax_str(AXUIElementRef el, CFStringRef attr) {
+    CFTypeRef v = ly_ax_val(el, attr);
+    if (!v) return nil;
+    NSString *out = nil;
+    if (CFGetTypeID(v) == CFStringGetTypeID()) {
+        out = [NSString stringWithString:(__bridge NSString *)v];
+    } else if (CFGetTypeID(v) == CFNumberGetTypeID()) {
+        out = [(__bridge NSNumber *)v stringValue];
+    }
+    CFRelease(v);
+    return out;
+}
+
+/// 把元素压成一行摘要
+static NSDictionary *ly_ax_node(AXUIElementRef el) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    NSString *role  = ly_ax_str(el, CFSTR("AXRole"));
+    NSString *label = ly_ax_str(el, CFSTR("AXLabel"));
+    NSString *title = ly_ax_str(el, CFSTR("AXTitle"));
+    NSString *value = ly_ax_str(el, CFSTR("AXValue"));
+    NSString *ident = ly_ax_str(el, CFSTR("AXIdentifier"));
+    if (role)  d[@"role"] = role;
+    if (label.length) d[@"label"] = label;
+    if (title.length) d[@"title"] = title;
+    if (value.length) d[@"value"] = value;
+    if (ident.length) d[@"id"] = ident;
+
+    // frame = position + size（AXValue 包裹 CGPoint/CGSize）
+    CFTypeRef pos = ly_ax_val(el, CFSTR("AXPosition"));
+    CFTypeRef siz = ly_ax_val(el, CFSTR("AXSize"));
+    if (pos || siz) {
+        double px=0, py=0, sw=0, sh=0;
+        // AXValueGetValue 是系统函数，用 dlsym 取（避免链接期依赖）
+        typedef BOOL (*fn_axv_get)(CFTypeRef, int, void *);
+        static fn_axv_get p_axv = NULL;
+        if (!p_axv) {
+            void *as_ = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_NOW);
+            p_axv = (fn_axv_get)ly_sym("AXValueGetValue", as_, NULL);
+        }
+        if (p_axv) {
+            // kAXValueCGPointType = 1, kAXValueCGSizeType = 2
+            if (pos) { double p2[2]={0,0}; if (p_axv(pos, 1, p2)) { px=p2[0]; py=p2[1]; } }
+            if (siz) { double s2[2]={0,0}; if (p_axv(siz, 2, s2)) { sw=s2[0]; sh=s2[1]; } }
+        }
+        if (px || py || sw || sh) {
+            d[@"x"] = @(px); d[@"y"] = @(py);
+            d[@"w"] = @(sw); d[@"h"] = @(sh);
+        }
+    }
+    if (pos) CFRelease(pos);
+    if (siz) CFRelease(siz);
+    return d.count ? d : nil;
+}
+
+static void ly_ax_walk(AXUIElementRef el, int depth, int maxDepth, NSMutableArray *out) {
+    if (!el || depth > maxDepth || out.count > 800) return;
+    NSDictionary *n = ly_ax_node(el);
+    if (n) [out addObject:n];
+    if (depth == maxDepth) return;
+    CFTypeRef kids = ly_ax_val(el, CFSTR("AXChildren"));
+    if (kids && CFGetTypeID(kids) == CFArrayGetTypeID()) {
+        CFArrayRef arr = (CFArrayRef)kids;
+        CFIndex cnt = CFArrayGetCount(arr);
+        for (CFIndex i = 0; i < cnt && out.count < 800; i++) {
+            AXUIElementRef k = (AXUIElementRef)CFArrayGetValueAtIndex(arr, i);
+            if (k) ly_ax_walk(k, depth + 1, maxDepth, out);
+        }
+    }
+    if (kids) CFRelease(kids);
+}
+
+/// 返回前台 App 的 UI 树（或指定 bundle id 对应进程）
+static NSDictionary *ly_ax_capture(int depth, NSString *bundleID) {
+    if (!ly_ax_bootstrap()) {
+        return @{ @"ok": @NO, @"error": @"AX 符号不可用（AXUIElementCreateApplication / CopyAttributeValue）" };
+    }
+    AXUIElementRef target = NULL;
+    int pid = 0;
+
+    if (bundleID.length) {
+        // 通过 LSApplicationWorkspace 查 pid 比较麻烦；这里退化为不行就报错
+        return @{ @"ok": @NO, @"error": @"指定 bundle id 暂未支持，先用前台 App" };
+    }
+
+    if (p_ax_syswide) {
+        AXUIElementRef sys = p_ax_syswide();
+        if (sys) {
+            CFTypeRef focused = ly_ax_val(sys, CFSTR("AXFocusedApplication"));
+            if (focused) { target = (AXUIElementRef)focused; }
+            // sys 自身不释放（AX 对象生命周期与 CF 不同，保守起见跳过）
+        }
+    }
+    if (!target) {
+        return @{ @"ok": @NO, @"error": @"拿不到前台 App 的 AX 元素（可能需要辅助功能授权）" };
+    }
+    if (p_ax_getpid) pid = p_ax_getpid(target);
+
+    NSMutableArray *nodes = [NSMutableArray array];
+    BOOL timedOut = NO;
+    noff_dispatch_main_sync_timeout(8.0, &timedOut, ^id{
+        ly_ax_walk(target, 0, depth, nodes);
+        return nil;
+    });
+    if (timedOut) {
+        return @{ @"ok": @NO, @"error": @"读取 UI 树超时" };
+    }
+    return @{
+        @"ok": @YES,
+        @"pid": @(pid),
+        @"depth": @(depth),
+        @"count": @(nodes.count),
+        @"nodes": nodes,
+    };
+}
 
 // ── 主处理 ──
 static int hid_handler(int argc, char **argv,
@@ -449,10 +661,6 @@ static int hid_handler(int argc, char **argv,
         }
 
         // ── 辅助功能(AX)可用性探测：为后续"读 UI 树"做准备 ──
-        void *ax = dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities", RTLD_NOW);
-        BOOL ax_create_app = ly_sym("AXUIElementCreateApplication", ax, NULL) != NULL;
-        BOOL ax_copy_attr  = ly_sym("AXUIElementCopyAttributeValue", ax, NULL) != NULL;
-
         NSDictionary *data = @{
             @"hid_client_ok": @(ok),
             @"reason": ly_hid_reason(),
@@ -467,13 +675,15 @@ static int hid_handler(int argc, char **argv,
             @"sym_image_render":  renderFrom ? renderFrom.lastPathComponent : @"(not found)",
             @"sym_image_iosurface": surfaceFrom ? surfaceFrom.lastPathComponent : @"(not found)",
             @"dyld_image_count": @(_dyld_image_count()),
+            @"render_server_port_nonzero": @(ly_render_server_available()),
             @"screenshot_capture_ok": @(captureOk),
             @"screenshot_non_black": @(nonBlack),
             @"screenshot_strategy": strat ?: @"none",
             @"screenshot_note": captureNote,
             @"screen_capture": @(captureOk && nonBlack),
 
-            @"ax_available": @(ax_create_app && ax_copy_attr),
+            @"ax_available": @(ly_ax_bootstrap()),
+            @"ax_bootstrap_result": ly_ax_bootstrap() ? @"ok" : @"symbols missing",
 
             @"note": ok ? @"ready" : @"touch injection unavailable — check TrollStore entitlements",
         };
@@ -597,6 +807,14 @@ static int hid_handler(int argc, char **argv,
         ly_key(usage, YES); usleep(20 * 1000); ly_key(usage, NO);
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub, @{@"key": k, @"usage": @(usage)}), compact, quiet);
         return NOFF_EXIT_SUCCESS;
+    }
+
+    if ([sub isEqualToString:@"ui"]) {
+        int depth = 6;
+        if (pos.count) depth = MAX(1, MIN(12, [pos[0] intValue]));
+        NSDictionary *r = ly_ax_capture(depth, nil);
+        noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, @"ui", r), compact, quiet);
+        return [r[@"ok"] boolValue] ? NOFF_EXIT_SUCCESS : NOFF_EXIT_ERROR;
     }
 
     if ([sub isEqualToString:@"screenshot"]) {
