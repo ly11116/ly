@@ -503,7 +503,12 @@ static BOOL ly_ax_bootstrap(void) {
     const char *fw[] = {
         "/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities",
         "/System/Library/PrivateFrameworks/AccessibilityUIUtilities.framework/AccessibilityUIUtilities",
+        "/System/Library/PrivateFrameworks/AXCoreUtilities.framework/AXCoreUtilities",
+        "/System/Library/PrivateFrameworks/AccessibilitySharedSupport.framework/AccessibilitySharedSupport",
+        "/System/Library/PrivateFrameworks/AccessibilitySettingsLoader.framework/AccessibilitySettingsLoader",
+        "/usr/lib/libAXRuntime.dylib",
         "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
+        "/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices",
     };
     for (size_t i = 0; i < sizeof(fw)/sizeof(fw[0]) && !g_ax; i++) {
         g_ax = dlopen(fw[i], RTLD_NOW);
@@ -722,6 +727,19 @@ static void ly_dbg(int fd) {
     ly_dbg_line(fd, @"【4】辅助功能 AX");
     BOOL axok = ly_ax_bootstrap();
     ly_dbg_line(fd, @"  bootstrap: %s", axok ? "OK" : "SYMBOLS MISSING");
+    {
+        typedef BOOL (*fn_trusted)(void);
+        fn_trusted p_tr = (fn_trusted)ly_sym("AXIsProcessTrusted", g_ax, NULL);
+        if (!p_tr) p_tr = (fn_trusted)ly_sym("_AXIsProcessTrusted", g_ax, NULL);
+        if (p_tr) {
+            __block BOOL tv = NO;
+            noff_try_objc(^{ tv = p_tr(); });
+            ly_dbg_line(fd, @"  AXIsProcessTrusted = %s  %@", tv ? "YES" : "NO",
+                        tv ? @"" : @"← 进程未被授权为辅助功能客户端（-25216 的原因）");
+        } else {
+            ly_dbg_line(fd, @"  AXIsProcessTrusted 符号: 未找到");
+        }
+    }
     ly_dbg_line(fd, @"  CreateSystemWide: %s", p_ax_syswide ? "有" : "无");
     ly_dbg_line(fd, @"  CreateApplication: %s", p_ax_app ? "有" : "无");
     ly_dbg_line(fd, @"  CopyAttributeValue: %s", p_ax_copy ? "有" : "无");
@@ -841,6 +859,23 @@ static void ly_dbg(int fd) {
             (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
                 @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprAligned),
                 @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceIsGlobal": @YES }) }];
+        // ★ CARenderServerRenderDisplay 的经典配方：必须落在渲染服务的显存区
+        //   PurpleGfxMem。上次重写变体表时我把它弄丢了。
+        [variants addObject:@{ @"name": @"aligned+PurpleGfxMem", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprAligned),
+                @"IOSurfacePixelFormat": @(0x42475241),
+                @"IOSurfaceMemoryRegion": @"PurpleGfxMem",
+                @"IOSurfaceIsGlobal": @YES }) }];
+        [variants addObject:@{ @"name": @"PurpleGfxMem+rawBPR", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(bprRaw),
+                @"IOSurfacePixelFormat": @(0x42475241),
+                @"IOSurfaceMemoryRegion": @"PurpleGfxMem" }) }];
+        [variants addObject:@{ @"name": @"GlobalOnly", @"p":
+            (@{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                @"IOSurfaceIsGlobal": @YES }) }];
+        [variants addObject:@{ @"name": @"empty", @"p": @{} }];
         __block void *surf = NULL;
         NSString *usedVariant = @"none";
         for (NSDictionary *v in variants) {
