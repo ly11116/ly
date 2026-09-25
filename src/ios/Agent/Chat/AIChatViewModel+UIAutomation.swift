@@ -123,11 +123,21 @@ extension AIChatViewModel {
                 return FileToolResult(output: trace.joined(separator: "\n") + "\n[已取消]", success: false)
             }
 
-            // 截图（含其他 App 的画面）
+            // ── 截图：走「系统截图 + 相册导出」链路 ──
+            // 为什么不用 apple-hid screenshot：
+            //   实测本机 IOSurfaceCreate 全部变体返回 NULL（8/8），
+            //   _UICreateScreenUIImage 返回 nil，CARenderServerSnapshot 返回 NULL。
+            //   而 HID 触控注入是可用的 —— 于是改走：
+            //     注入「音量上 + 电源」→ iOS 自己截图 → 存相册 → apple-photos export
+            //   这条链路每一环都已实测可用，且不依赖 IOSurface / AX。
             let shotPath = "/var/minis/attachments/ui_step\(step).png"
-            let shot = await runNative("apple-hid screenshot \(Self.shellQuote(shotPath))")
-            guard shot.exit == 0 else {
-                trace.append("step \(step): screenshot failed → \(shot.output.prefix(200))")
+            let shot = await Self.captureViaSystemScreenshot(
+                toGuestPath: shotPath, run: { await self.runNative($0) })
+            switch shot {
+            case .ok:
+                break
+            case .failed(let why):
+                trace.append("step \(step): 截图失败 → \(why)")
                 return FileToolResult(output: trace.joined(separator: "\n"), success: false)
             }
             guard let imgData = loadGuestFileAsData(shotPath) else {
@@ -317,6 +327,69 @@ extension AIChatViewModel {
     }
 
     // MARK: - 辅助
+
+    // MARK: - 截图（系统截图 + 相册导出）
+
+    enum CaptureOutcome {
+        case ok
+        case failed(String)
+    }
+
+    /// 让 iOS 自己截图，再从相册导出到 guest 路径。
+    /// 走这条路是因为 IOSurface / AX 在本机被用户态服务拒绝，而 HID 可用。
+    static func captureViaSystemScreenshot(
+        toGuestPath guestPath: String,
+        run: (String) async -> (output: String, exit: Int)
+    ) async -> CaptureOutcome {
+
+        // 记录触发前的最新一张，避免误取到旧截图
+        let before = await Self.latestPhotoId(run: run)
+
+        // 1) 注入 音量上 + 电源
+        let trig = await run("apple-hid systshot")
+        if trig.exit != 0 {
+            return .failed("systshot exit=\(trig.exit) \(trig.output.prefix(160))")
+        }
+
+        // 2) 轮询相册，等新截图出现（最多 ~6s）
+        var newId: String? = nil
+        for _ in 0..<12 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let cur = await Self.latestPhotoId(run: run)
+            if let c = cur, c != before { newId = c; break }
+        }
+        guard let assetId = newId else {
+            return .failed("系统截图未出现在相册（可能被「屏幕使用时间」或权限拦截）")
+        }
+
+        // 3) 导出到 guest 路径
+        let exp = await run("apple-photos export --id \(Self.shellQuote(assetId)) --size original --path \(Self.shellQuote(guestPath))")
+        if exp.exit != 0 {
+            // 有的版本 export 用 --dest / 位置参数，退一步再试
+            let exp2 = await run("apple-photos export --id \(Self.shellQuote(assetId)) \(Self.shellQuote(guestPath))")
+            if exp2.exit != 0 {
+                return .failed("export exit=\(exp.exit) \(exp.output.prefix(160))")
+            }
+        }
+        return .ok
+    }
+
+    /// 取相册最新一张的 localIdentifier
+    private static func latestPhotoId(
+        run: (String) async -> (output: String, exit: Int)
+    ) async -> String? {
+        let r = await run("apple-photos list --limit 1 --type photo")
+        guard r.exit == 0,
+              let start = r.output.firstIndex(of: "{"),
+              let end = r.output.lastIndex(of: "}"),
+              let data = String(r.output[start...end]).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let payload = (obj["data"] as? [String: Any]) ?? obj
+        if let assets = payload["assets"] as? [[String: Any]], let first = assets.first {
+            return (first["id"] as? String) ?? (first["localIdentifier"] as? String)
+        }
+        return nil
+    }
 
     private func runNative(_ cmd: String) async -> (output: String, exit: Int) {
         do {
