@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>com.apple.accessibility.api</key>
+	<true/>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
 	<key>com.apple.developer.healthkit.access</key>
@@ -31,6 +33,10 @@
 	<true/>
 	<key>com.apple.private.accessibility</key>
 	<true/>
+	<key>com.apple.private.accessibility.axclient</key>
+	<true/>
+	<key>com.apple.private.axclient</key>
+	<true/>
 	<key>com.apple.private.axserver</key>
 	<true/>
 	<key>com.apple.private.backgroundtask.allow</key>
@@ -52,10 +58,17 @@
 		<string>Uninstall</string>
 		<string>Browse</string>
 	</array>
+	<key>com.apple.private.screen-capture</key>
+	<true/>
 	<key>com.apple.private.security.no-sandbox</key>
 	<true/>
 	<key>com.apple.private.security.storage.AppDataContainers</key>
 	<true/>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServiceAccessibility</string>
+		<string>kTCCServiceScreenCapture</string>
+	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.ly.minis</string>

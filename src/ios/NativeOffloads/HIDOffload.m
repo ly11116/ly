@@ -54,7 +54,13 @@ typedef IOHIDEventRef (*fn_create_digitizer)(CFAllocatorRef, uint64_t, IOHIDDigi
                                              uint32_t, uint32_t, uint32_t,
                                              double, double, double, double, double, double,
                                              uint32_t, uint32_t);
-typedef IOHIDEventRef (*fn_create_keyboard)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, uint32_t, uint32_t);
+// 真实签名：IOHIDEventCreateKeyboardEvent(allocator, timestamp,
+//                                        usagePage, usage, down, options)
+// ⚠️ 曾把 usagePage 与 usage 传反（第3参是 page，不是 usage）
+typedef IOHIDEventRef (*fn_create_keyboard)(CFAllocatorRef, uint64_t,
+                                            uint32_t, uint32_t, uint32_t, uint32_t);
+#define kHIDPage_Keyboard  0x07u
+#define kHIDPage_Consumer  0x0Cu
 typedef void  (*fn_event_set_int)(IOHIDEventRef, uint32_t, CFIndex);
 typedef int   (*fn_render_display)(uint32_t, CFStringRef, void *surface, uint32_t, uint32_t);
 typedef uint32_t (*fn_render_server_port)(void *);
@@ -178,13 +184,28 @@ static uint32_t ly_usage_for_char(char c) {
     }
 }
 
-static BOOL ly_key(uint32_t usage, BOOL down) {
+/// 发送键盘/消费页按键。page: 0x07=键盘页, 0x0C=消费页(电源/音量/媒体键)
+static BOOL ly_key_page(uint32_t page, uint32_t usage, BOOL down) {
     if (!ly_hid_bootstrap() || !p_kbd) return NO;
-    IOHIDEventRef ev = p_kbd(kCFAllocatorDefault, mach_absolute_time(), usage, down ? 1 : 0, 0, 0);
+    __block IOHIDEventRef ev = NULL;
+    noff_try_objc(^{
+        ev = p_kbd(kCFAllocatorDefault, mach_absolute_time(),
+                   page, usage, down ? 1 : 0, 0);
+    });
     if (!ev) return NO;
     p_dispatch(g_client, ev);
     CFRelease(ev);
     return YES;
+}
+
+/// 兼容旧调用：默认键盘页
+static BOOL ly_key(uint32_t usage, BOOL down) {
+    return ly_key_page(kHIDPage_Keyboard, usage, down);
+}
+
+/// 消费页按键（电源键 / 音量键 / 媒体键）
+static BOOL ly_consumer_key(uint32_t usage, BOOL down) {
+    return ly_key_page(kHIDPage_Consumer, usage, down);
 }
 
 /// Cmd+V（iPadOS 上对所有输入框生效的粘贴快捷键）
@@ -428,7 +449,9 @@ static NSString *const HELP_TEXT =
      "  apple-hid key <usage-hex|name>         e.g. 0x28(=enter) home\n"
      "  apple-hid screenshot <path>            Full screen, INCLUDING other apps\n"
      "  apple-hid ui [depth]                   Dump foreground app's accessibility UI tree\n"
-     "  apple-hid dbg                          Step-by-step capability diagnosis (plain text)\n"
+     "  apple-hid dbg [outfile]                Step-by-step capability diagnosis (plain text)\n"
+     "  apple-hid hwkey <power|volup|voldown|home>   Hardware/consumer keys\n"
+     "  apple-hid systshot                     Trigger system screenshot (volup + power)\n"
      "                                         (labels + exact frames — better than screenshots)\n"
      "\n"
      "OPTIONS:\n"
@@ -732,6 +755,37 @@ static void ly_dbg(int fd) {
                         e==0 ? @"(OK)" : (e==-25211 ? @"(← APIDisabled，缺辅助功能权限)" :
                                           (e==-25205 ? @"(← CannotComplete)" :
                                            (e==-25203 ? @"(← InvalidUIElement)" : @""))));
+            // 补充诊断：枚举 SystemWide 元素本身可读的属性，判断是"元素不可用"
+            // 还是"跨进程访问被拒"。错误码 -25216 疑为 TCC 未授权。
+            {
+                typedef int (*fn_names)(AXUIElementRef, CFArrayRef *);
+                fn_names p_names = (fn_names)ly_sym("AXUIElementCopyAttributeNames", g_ax, NULL);
+                ly_dbg_line(fd, @"  CopyAttributeNames 符号: %s", p_names ? "YES" : "NO");
+                if (p_names) {
+                    __block CFArrayRef names = NULL;
+                    __block int ne = -1;
+                    noff_try_objc(^{ ne = p_names(sys, &names); });
+                    ly_dbg_line(fd, @"  枚举 SystemWide 属性: err=%d count=%s", ne,
+                                names ? [[NSString stringWithFormat:@"%ld", (long)CFArrayGetCount(names)] UTF8String] : "NULL");
+                    if (names) CFRelease(names);
+                }
+                // 试几个常见属性，看哪个能通
+                const char *attrs[] = {"AXChildren", "AXWindows", "AXFocusedWindow",
+                                       "AXFocusedUIElement", "AXMainWindow", "AXRole"};
+                for (size_t ai = 0; ai < sizeof(attrs)/sizeof(attrs[0]); ai++) {
+                    __block CFTypeRef av = NULL;
+                    __block AXError ae = -1;
+                    // 先把 C 字符串转成 ObjC 对象 —— C 数组不能在 block 内引用
+                    NSString *attrName = [NSString stringWithUTF8String:attrs[ai]];
+                    noff_try_objc(^{
+                        ae = p_ax_copy(sys, (__bridge CFStringRef)attrName, &av);
+                    });
+                    ly_dbg_line(fd, @"    %-20s err=%d %s", attrs[ai], ae,
+                                av ? "有值" : "");
+                    if (av) CFRelease(av);
+                }
+            }
+
             if (v) {
                 int pid = p_ax_getpid ? p_ax_getpid((AXUIElementRef)v) : 0;
                 ly_dbg_line(fd, @"  前台 App pid = %d", pid);
@@ -1056,6 +1110,53 @@ static int hid_handler_inner(int argc, char **argv,
         ly_cmd_v();
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub,
             @{@"clipboard_set": @(set), @"length": @(text.length)}), compact, quiet);
+        return NOFF_EXIT_SUCCESS;
+    }
+
+    // ── 硬件按键：可用于触发系统截图（音量上 + 电源）──
+    if ([sub isEqualToString:@"hwkey"]) {
+        NSString *k = pos.count ? [pos[0] lowercaseString] : @"";
+        struct { const char *n; uint32_t usage; } map[] = {
+            {"power",     0x30},   // kHIDUsage_Csmr_Power
+            {"volup",     0xE9},   // kHIDUsage_Csmr_VolumeIncrement
+            {"voldown",   0xEA},   // kHIDUsage_Csmr_VolumeDecrement
+            {"mute",      0xE2},
+            {"playpause", 0xCD},
+            {"home",      0x40},   // kHIDUsage_Csmr_Menu
+        };
+        uint32_t usage = 0;
+        for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+            if ([k isEqualToString:[NSString stringWithUTF8String:map[i].n]]) { usage = map[i].usage; break; }
+        }
+        if (!usage) {
+            noff_emit_json(stdout_fd, noff_json_error(TOOL_NAME, sub, NOFF_ERR_INVALID_ARGS,
+                @"Usage: apple-hid hwkey <power|volup|voldown|mute|playpause|home>"), compact, quiet);
+            return NOFF_EXIT_INVALID_ARGS;
+        }
+        BOOL r1 = ly_consumer_key(usage, YES);
+        usleep(60 * 1000);
+        BOOL r2 = ly_consumer_key(usage, NO);
+        noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub,
+            @{ @"key": k, @"page": @(kHIDPage_Consumer), @"usage": @(usage),
+               @"down": @(r1), @"up": @(r2), @"injected": @(r1 && r2) }), compact, quiet);
+        return NOFF_EXIT_SUCCESS;
+    }
+
+    // ── 触发系统截图：同时按住 音量上 + 电源 ──
+    if ([sub isEqualToString:@"systshot"]) {
+        ly_dbg_line(stdout_fd, @"触发系统截图（音量上 + 电源）...\n");
+        // 按下顺序：先音量上，再电源（模拟真实手势）
+        ly_consumer_key(0xE9, YES);
+        usleep(40 * 1000);
+        ly_consumer_key(0x30, YES);
+        usleep(120 * 1000);          // 保持按住
+        ly_consumer_key(0xE9, NO);
+        usleep(40 * 1000);
+        ly_consumer_key(0x30, NO);
+        usleep(1500 * 1000);         // 等系统截图完成 + 入库相册
+        ly_dbg_line(stdout_fd, @"已发送。稍后用 apple-photos 查找最新截图。\n");
+        noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, sub,
+            @{ @"sent": @YES, @"hint": @"用 apple-photos list 找最新截图" }), compact, quiet);
         return NOFF_EXIT_SUCCESS;
     }
 
