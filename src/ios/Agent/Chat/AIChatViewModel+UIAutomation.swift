@@ -116,6 +116,7 @@ extension AIChatViewModel {
         var history: [AgentMessage] = []
         var step = 0
         var lastAction = ""
+        var lastCapturedAssetId: String? = nil   // 本步截图对应的相册资源，用完即删
 
         while step < p.maxSteps {
             step += 1
@@ -133,8 +134,9 @@ extension AIChatViewModel {
             let shot = await Self.captureViaSystemScreenshot(run: { await self.runNative($0) })
             let shotPath: String
             switch shot {
-            case .ok(let p):
+            case .ok(let p, let aid):
                 shotPath = p
+                lastCapturedAssetId = aid
             case .failed(let why):
                 trace.append("step \(step): 截图失败 → \(why)")
                 return FileToolResult(output: trace.joined(separator: "\n"), success: false)
@@ -142,6 +144,14 @@ extension AIChatViewModel {
             guard let imgData = loadGuestFileAsData(shotPath) else {
                 trace.append("step \(step): 截图文件读不到 \(shotPath)")
                 return FileToolResult(output: trace.joined(separator: "\n"), success: false)
+            }
+
+            // 读完立刻清理：截图是我们自己造的垃圾，不该留在用户相册里。
+            // （每步一张，15 步会积 15 张；用完即删。）
+            let assetIdForCleanup = lastCapturedAssetId
+            lastCapturedAssetId = nil
+            if let aid = assetIdForCleanup {
+                _ = await runNative("apple-photos delete --ids \(Self.shellQuote(aid))")
             }
 
             // 问模型
@@ -283,6 +293,16 @@ extension AIChatViewModel {
         {"action":"done","note":"what was accomplished and where it is visible"}
         {"action":"fail","note":"what blocked you and what you already tried"}
 
+        SYSTEM DIALOGS (do this FIRST):
+        - If the screenshot shows a SYSTEM dialog/alert/sheet overlaying everything — e.g. a
+          "软件更新已完成 / Software Update Complete", permission prompt, "Continue"/"继续"/"OK"/"允许"
+          button, Welcome wizard, or any modal that is NOT part of the target app — your ONLY job on
+          this step is to dismiss it: {"action":"tap","x":..,"y":..,"label":"继续","note":"dismiss system dialog"}.
+        - Do NOT try to perform the goal while a modal is covering the screen; the taps will land on the modal.
+        - After dismissing, the next step will show the real screen.
+        - If the SAME dialog keeps reappearing after you dismissed it, reply
+          {"action":"fail","note":"blocked by a repeating system dialog: <text on it>"} instead of looping.
+
         HARD RULES:
         - Output exactly one action per reply. Always set `label` for tap/long: the literal text shown on the control.
         - NEVER tap anything whose text means pay / confirm order / purchase / submit order / subscribe / transfer. If reaching the goal REQUIRES such a tap, reply {"action":"done","note":"reached the final confirmation screen; user must tap <label> themselves"}.
@@ -330,7 +350,7 @@ extension AIChatViewModel {
     // MARK: - 截图（系统截图 + 相册导出）
 
     enum CaptureOutcome {
-        case ok(String)                 // 导出的 guest 路径
+        case ok(path: String, assetId: String?)   // 导出的 guest 路径 + 相册资源 id（供清理）
         case failed(String)
     }
 
@@ -374,7 +394,7 @@ extension AIChatViewModel {
         }
 
         // 5) 从返回 JSON 读 data.path（扩展名运行时才定，不能自己拼）
-        if let path = Self.extractExportPath(from: exp.output) { return .ok(path) }
+        if let path = Self.extractExportPath(from: exp.output) { return .ok(path: path, assetId: assetId) }
 
         // 6) 兜底：按 safeId 前缀扫 offloads（与 export 的命名规则一致：
         //    把 assetId 里非字母数字字符替换成 _）
@@ -382,7 +402,7 @@ extension AIChatViewModel {
                            .joined(separator: "_")
         let ls = await run("ls -t /var/minis/offloads/ | grep -F \(Self.shellQuote(safeId)) | head -1")
         let f = ls.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !f.isEmpty { return .ok("/var/minis/offloads/\(f)") }
+        if !f.isEmpty { return .ok(path: "/var/minis/offloads/\(f)", assetId: assetId) }
 
         return .failed("export 成功但找不到输出文件（期望前缀 \(safeId)）")
     }
