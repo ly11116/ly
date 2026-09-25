@@ -25,6 +25,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <stdarg.h>
+#import <stdio.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <dlfcn.h>
 #import <mach/mach_time.h>
@@ -693,12 +694,39 @@ static void ly_dbg(int fd) {
         CGSize sz = [UIScreen mainScreen].bounds.size;
         CGFloat sc = [UIScreen mainScreen].scale;
         int w = (int)(sz.width*sc), h = (int)(sz.height*sc);
-        NSDictionary *props = @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
-            @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
-            @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4) };
+        // 逐个变体尝试：不同 iOS 版本对 IOSurface 属性要求不同
+        NSArray *variants = @[
+            @{ @"name": @"base",
+               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
+                        @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4) } },
+            @{ @"name": @"isGlobal",
+               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
+                        @"IOSurfacePixelFormat": @(0x42475241), @"IOSurfaceAllocSize": @(w*h*4),
+                        @"IOSurfaceIsGlobal": @YES } },
+            @{ @"name": @"noAllocSize",
+               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                        @"IOSurfaceBytesPerRow": @(w*4),
+                        @"IOSurfacePixelFormat": @(0x42475241) } },
+            @{ @"name": @"bgra8888",
+               @"p": @{ @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
+                        @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w*4),
+                        @"IOSurfacePixelFormat": @(0x42475241),
+                        @"IOSurfaceIsGlobal": @YES,
+                        @"IOSurfaceMemoryRegion": @"PurpleGfxMem" } },
+        ];
         __block void *surf = NULL;
-        noff_try_objc(^{ surf = p_c((__bridge CFDictionaryRef)props); });
-        ly_dbg_line(fd, @"  IOSurfaceCreate(%dx%d) = %s", w, h, surf ? "OK" : "NULL ← 权限或参数问题");
+        NSString *usedVariant = @"none";
+        for (NSDictionary *v in variants) {
+            __block void *s2 = NULL;
+            NSDictionary *props = v[@"p"];
+            noff_try_objc(^{ s2 = p_c((__bridge CFDictionaryRef)props); });
+            ly_dbg_line(fd, @"  IOSurfaceCreate[%@](%dx%d) = %s", v[@"name"], w, h,
+                        s2 ? "OK <<<" : "NULL");
+            if (s2 && !surf) { surf = s2; usedVariant = v[@"name"]; }
+        }
+        ly_dbg_line(fd, @"  选用的变体: %@", usedVariant);
         if (surf) {
             fn_iosurface_lock p_l = (fn_iosurface_lock)ly_sym("IOSurfaceLock", hIS, NULL);
             fn_iosurface_base p_b = (fn_iosurface_base)ly_sym("IOSurfaceGetBaseAddress", hIS, NULL);
@@ -706,6 +734,19 @@ static void ly_dbg(int fd) {
             ly_dbg_line(fd, @"  IOSurfaceLock      = %s", p_l ? ((p_l(surf,0,&seed)==0) ? @"OK" : @"非0") : @"符号缺失");
             void *base = p_b ? p_b(surf) : NULL;
             ly_dbg_line(fd, @"  GetBaseAddress     = %s", base ? "OK" : "NULL");
+            // 另一条路：CARenderServerSnapshot 直接返回 CGImage，无需自己建 IOSurface
+            typedef CFTypeRef (*fn_snapshot)(uint32_t, CFStringRef);
+            fn_snapshot p_snap = (fn_snapshot)ly_sym("CARenderServerSnapshot", hCG, NULL);
+            if (!p_snap) p_snap = (fn_snapshot)ly_sym("CARenderServerCreateSnapshot", hCG, NULL);
+            ly_dbg_line(fd, @"  CARenderServerSnapshot 符号: %s", p_snap ? "有" : "无");
+            if (p_snap) {
+                __block CFTypeRef shot = NULL;
+                BOOL to2 = NO;
+                noff_dispatch_main_sync_timeout(3.0, &to2, ^id{ shot = p_snap(sp, CFSTR("LCD")); return nil; });
+                ly_dbg_line(fd, @"  Snapshot(port=%u) = %s", sp, shot ? "拿到对象 <<< 这条路可行" : "NULL");
+                if (shot) CFRelease(shot);
+            }
+
             fn_render_display p_r = (fn_render_display)ly_sym("CARenderServerRenderDisplay", hCG, NULL);
             if (p_r) {
                 __block int rc = -999;
@@ -744,6 +785,24 @@ static void ly_dbg(int fd) {
     ly_dbg_line(fd, @"  CreateSystemWide: %s", p_ax_syswide ? "有" : "无");
     ly_dbg_line(fd, @"  CreateApplication: %s", p_ax_app ? "有" : "无");
     ly_dbg_line(fd, @"  CopyAttributeValue: %s", p_ax_copy ? "有" : "无");
+    // 多个候选入口逐个试
+    ly_dbg_line(fd, @"  候选入口逐个试：");
+    for (int i = 1; i <= 6; i++) {
+        NSString *nm = nil; void *h = NULL;
+        switch (i) {
+            case 1: nm = @"AXUIElementCreateSystemWide"; h = g_ax; break;
+            case 2: nm = @"AXUIElementCreateApplication"; h = g_ax; break;
+            case 3: nm = @"_AXUIElementCreateWithRemoteToken"; h = g_ax; break;
+            case 4: nm = @"AXUIElementCreateWithRemoteToken"; h = g_ax; break;
+            case 5: nm = @"AXUIElementCopyAttributeValue"; h = g_ax; break;
+            case 6: nm = @"AXUIElementPerformAction"; h = g_ax; break;
+        }
+        g_lastSymImage = nil;
+        void *pp = ly_sym(nm.UTF8String, h, NULL);
+        ly_dbg_line(fd, @"    %-36s %-10s %@", nm,
+                    pp ? @"FOUND" : @"NOT FOUND",
+                    g_lastSymImage ? g_lastSymImage.lastPathComponent : @"");
+    }
     if (axok && p_ax_syswide) {
         AXUIElementRef sys = p_ax_syswide();
         ly_dbg_line(fd, @"  SystemWide 元素 = %s", sys ? "非空" : "NULL");
@@ -965,6 +1024,20 @@ static int hid_handler(int argc, char **argv,
     }
 
     if ([sub isEqualToString:@"dbg"]) {
+        // 可选：把诊断写到文件（便于整体取回，避免转述失真）
+        NSString *outPath = pos.count ? pos[0] : nil;
+        if (outPath.length) {
+            NSString *host = noff_resolve_host_path(outPath);
+            FILE *f = host ? fopen(host.UTF8String, "w") : NULL;
+            if (f) {
+                ly_dbg(fileno(f));
+                long sz = ftell(f);
+                fclose(f);
+                noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, @"dbg",
+                    @{ @"written_to": outPath, @"bytes": [NSNumber numberWithLong:(sz > 0 ? sz : 0)] }), compact, quiet);
+                return NOFF_EXIT_SUCCESS;
+            }
+        }
         ly_dbg(stdout_fd);
         return NOFF_EXIT_SUCCESS;
     }
