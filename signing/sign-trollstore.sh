@@ -52,7 +52,7 @@ cat > "$GEN_APPEX_ENT" <<'PLIST'
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.openminis.app</string>
+		<string>group.com.ly.minis</string>
 	</array>
 </dict>
 </plist>
@@ -112,10 +112,10 @@ for k in com.apple.security.application-groups \
   if grep -q "$k" /tmp/_ent.plist; then echo "  OK $k"; else echo "  MISSING $k"; fail=1; fi
 done
 # app group 的值必须包含代码要求的那个
-if grep -q "group\.com\.openminis\.app" /tmp/_ent.plist; then
-  echo "  OK group.com.openminis.app (代码硬编码的那个)"
+if grep -q "group\.com\.ly\.minis" /tmp/_ent.plist; then
+  echo "  OK group.com.ly.minis (代码与 entitlements 一致的那个)"
 else
-  echo "  FATAL: 缺少 group.com.openminis.app —— 启动会 SIGTRAP"
+  echo "  FATAL: 缺少 group.com.ly.minis —— 启动会 SIGTRAP"
   fail=1
 fi
 [ $fail -eq 0 ] || { echo "FATAL: entitlements 校验失败"; exit 1; }
@@ -123,7 +123,7 @@ fi
 echo "--- step 7: 扩展的 app group ---"
 for appex in "$APP"/PlugIns/*.appex; do
   [ -d "$appex" ] || continue
-  if codesign -d --entitlements :- "$appex" 2>&1 | grep -q "group.com.openminis.app"; then
+  if codesign -d --entitlements :- "$appex" 2>&1 | grep -q "group.com.ly.minis"; then
     echo "  OK $(basename "$appex")"
   else
     echo "  WARN $(basename "$appex") 未包含 app group"

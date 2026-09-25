@@ -9,13 +9,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     let domain: NSFileProviderDomain
 
-    private static let log = OSLog(subsystem: "com.openminis.app.FileProvider", category: "Extension")
+    private static let log = OSLog(subsystem: "com.ly.minis.FileProvider", category: "Extension")
 
     /// Root directory for all FileProvider-visible files in the App Group container.
     static var providerRoot: URL {
         // 取不到 App Group 容器时回退到 Local 目录，而不是强制解包崩溃。
         let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: "group.com.openminis.app"
+            forSecurityApplicationGroupIdentifier: "group.com.ly.minis"
         ) ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let url = container.appendingPathComponent("MinisFileProvider", isDirectory: true)
@@ -91,7 +91,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         }
 
         // Location 2: under MinisConfig (private but still pure cruft).
-        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") {
+        if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ly.minis") {
             let inConfig = container.appendingPathComponent("MinisConfig/logs", isDirectory: true)
             if fm.fileExists(atPath: inConfig.path, isDirectory: &isDir), isDir.boolValue {
                 try? fm.removeItem(at: inConfig)
@@ -110,7 +110,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         guard fm.fileExists(atPath: legacy.path) else { return }
         // Only delete if the canonical copy already exists under MinisConfig —
         // otherwise we'd lose the data.
-        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else { return }
+        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ly.minis") else { return }
         let canonical = container.appendingPathComponent("MinisConfig/mounted-folders.json")
         if fm.fileExists(atPath: canonical.path) {
             try? fm.removeItem(at: legacy)

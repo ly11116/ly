@@ -121,7 +121,7 @@ static dispatch_queue_t authQueue(void) {
     static dispatch_queue_t q = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.openminis.photos.auth", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.ly.minis.photos.auth", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }

@@ -656,7 +656,7 @@ struct MinisApp: App {
     // MARK: - FileProvider
 
     private static let fileProviderDomain = NSFileProviderDomain(
-        identifier: NSFileProviderDomainIdentifier("com.openminis.app.files"),
+        identifier: NSFileProviderDomainIdentifier("com.ly.minis.files"),
         displayName: "Minis"
     )
 
@@ -697,7 +697,7 @@ struct MinisApp: App {
         guard previous != current else { return }
         UserDefaults.standard.set(current, forKey: key)
 
-        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else { return }
+        guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ly.minis") else { return }
         let dir = container.appendingPathComponent("MinisConfig", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("fp-sync-trace.log")
@@ -863,7 +863,7 @@ struct MinisApp: App {
             }
 
             // Remove any stale domains with different identifiers, then add ours.
-            let stale = domains.filter { $0.identifier.rawValue.contains("com.openminis") }
+            let stale = domains.filter { $0.identifier.rawValue.contains("com.ly.minis") }
             let group = DispatchGroup()
             for d in stale {
                 group.enter()
@@ -1049,7 +1049,7 @@ struct MinisApp: App {
         // 强制解包会直接 brk #1（实测过启动 SIGTRAP）。取不到就跳过迁移，
         // 让 App 能正常起来，由用户在设置里处理。
         guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: "group.com.openminis.app") else {
+            forSecurityApplicationGroupIdentifier: "group.com.ly.minis") else {
             // 这里在 static func 内，无文件级 logger 可用，用 NSLog 保持可观测。
             NSLog("[MigrateSharedDir] app group 容器不可用，跳过共享目录迁移")
             return
@@ -1094,7 +1094,7 @@ struct MinisApp: App {
     /// targets logged during MOUNT setup.
     private static func logFPSyncTracePaths() {
         let fm = FileManager.default
-        let groupID = "group.com.openminis.app"
+        let groupID = "group.com.ly.minis"
         let containerURL = fm.containerURL(forSecurityApplicationGroupIdentifier: groupID)
         let containerPath = containerURL?.path ?? "<nil>"
         let resolvedContainer = containerURL?.resolvingSymlinksInPath().path ?? "<nil>"

@@ -116,7 +116,7 @@ static dispatch_queue_t speak_session_queue(void) {
     static dispatch_queue_t q = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.openminis.speakoffload.session",
+        q = dispatch_queue_create("com.ly.minis.speakoffload.session",
                                   DISPATCH_QUEUE_SERIAL);
     });
     return q;

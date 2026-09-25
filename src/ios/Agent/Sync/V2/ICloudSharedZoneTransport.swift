@@ -27,7 +27,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     // MARK: - Configuration
 
-    static let containerIdentifier = "iCloud.com.openminis.app"
+    static let containerIdentifier = "iCloud.com.ly.minis"
 
     /// Fixed zone names. Never include device id.
     static let sharedZoneName  = "minis-shared"
@@ -467,7 +467,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
     /// Background queue used by flushEtagCacheIfDirty so the per-record
     /// NSKeyedArchive + plist serialization (can be 5–10MB at scale) does
     /// not block the main thread between sends.
-    private static let etagFlushQueue = DispatchQueue(label: "com.openminis.sync.etagFlush", qos: .utility)
+    private static let etagFlushQueue = DispatchQueue(label: "com.ly.minis.sync.etagFlush", qos: .utility)
     private var etagFlushScheduled: Bool = false
     private static let etagFlushDebounce: TimeInterval = 2.0
 
@@ -564,7 +564,7 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
 
     private func scheduleRecentFetchTimer() {
         recentFetchTimer?.cancel()
-        let t = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "com.openminis.sync.recentFetch", qos: .utility))
+        let t = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "com.ly.minis.sync.recentFetch", qos: .utility))
         t.schedule(deadline: .now() + Self.recentFetchInterval, repeating: Self.recentFetchInterval)
         t.setEventHandler { [weak self] in
             logger.info("[iCloudTrace] recentFetchTimer fired")

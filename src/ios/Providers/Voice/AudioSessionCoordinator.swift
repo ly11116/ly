@@ -154,7 +154,7 @@ final class AudioSessionCoordinator {
     /// Serial, so the ordering guarantees the old main-thread-only code relied on
     /// (deactivate-then-activate, category-before-active) still hold. AVAudioSession
     /// is thread-safe; it was never the main thread that made these calls correct.
-    private static let sessionQueue = DispatchQueue(label: "com.openminis.audiosession.apply")
+    private static let sessionQueue = DispatchQueue(label: "com.ly.minis.audiosession.apply")
 
     /// Number of profile switches enqueued on `sessionQueue` but not yet applied.
     /// Written from BOTH the main actor (enqueue) and the session queue

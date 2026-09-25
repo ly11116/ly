@@ -63,7 +63,7 @@ static dispatch_queue_t authQueue(void) {
     static dispatch_queue_t q = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        q = dispatch_queue_create("com.openminis.media.auth", DISPATCH_QUEUE_SERIAL);
+        q = dispatch_queue_create("com.ly.minis.media.auth", DISPATCH_QUEUE_SERIAL);
     });
     return q;
 }

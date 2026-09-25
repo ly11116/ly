@@ -257,7 +257,7 @@ static NSOperationQueue *authQueue(void) {
     dispatch_once(&onceToken, ^{
         q = [[NSOperationQueue alloc] init];
         q.maxConcurrentOperationCount = 1;
-        q.name = @"com.openminis.healthkit.auth";
+        q.name = @"com.ly.minis.healthkit.auth";
     });
     return q;
 }

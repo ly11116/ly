@@ -29,7 +29,7 @@ enum BackupDelivery {
     ///      declared, the extension resolves and no copy happens.
     ///   2. It sets up "open the file to import it", which the restore side
     ///      will want.
-    static let contentTypeIdentifier = "com.openminis.app.minisbak"
+    static let contentTypeIdentifier = "com.ly.minis.minisbak"
 
     static var contentType: UTType {
         UTType(contentTypeIdentifier)

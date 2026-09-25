@@ -761,7 +761,7 @@ final class SessionDataSimulator: ObservableObject {
                 tb("Updating the auth manager:"),
                 ParsedBlock(kind: .fileEditTool(path: "src/ios/Auth/AuthManager.swift"), content: "{}", toolStatus: .success),
                 tb("Let me verify the keychain access:"),
-                ParsedBlock(kind: .shellTool(command: "security find-generic-password -s 'com.openminis.auth'"), content: "security find-generic-password", toolStatus: .failed(message: "The specified item could not be found in the keychain.")),
+                ParsedBlock(kind: .shellTool(command: "security find-generic-password -s 'com.ly.minis.auth'"), content: "security find-generic-password", toolStatus: .failed(message: "The specified item could not be found in the keychain.")),
                 tb("Expected — no keychain entry exists yet. Let me set up the test environment:"),
                 ParsedBlock(kind: .shellTool(command: "xcodebuild test -scheme Minis -only-testing:AuthTests"), content: "xcodebuild test", toolStatus: .failed(message: "xcodebuild: error: Testing failed.")),
                 tb("Two test failures. Let me fix them:"),

@@ -147,7 +147,7 @@ enum RcloneRemoteStore {
 
     // MARK: - Secrets
 
-    private static let keychainService = "com.openminis.app.rclone"
+    private static let keychainService = "com.ly.minis.rclone"
 
     private static func storeSecret(_ secret: String, for name: String) {
         let account = name

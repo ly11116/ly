@@ -44,8 +44,8 @@ workflows:
           /usr/libexec/PlistBuddy -c "Print :com.apple.security.application-groups" src/ios/Minis.entitlements
           /usr/libexec/PlistBuddy -c "Print :com.apple.private.hid.client.event-dispatch" src/ios/Minis.entitlements
           /usr/libexec/PlistBuddy -c "Print :com.apple.private.iosurface" src/ios/Minis.entitlements
-          grep -q "group.com.openminis.app" src/ios/Minis.entitlements \
-            || { echo "FATAL: Minis.entitlements 缺 group.com.openminis.app"; exit 1; }
+          grep -q "group.com.ly.minis" src/ios/Minis.entitlements \
+            || { echo "FATAL: Minis.entitlements 缺 group.com.ly.minis"; exit 1; }
           echo "  ✓ entitlements 符合预期（含 app group + HID + iosurface）"
 
       - name: Prepare xcconfig

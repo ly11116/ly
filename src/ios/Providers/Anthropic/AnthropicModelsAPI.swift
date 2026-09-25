@@ -147,7 +147,7 @@ private enum ModelsCache {
 
     private static var cacheDir: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.openminis.app.models-cache", isDirectory: true)
+            .appendingPathComponent("com.ly.minis.models-cache", isDirectory: true)
     }
 
     /// SHA-256 hash of the credential — irreversible.

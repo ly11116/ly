@@ -367,7 +367,7 @@ static int cmd_schedule(int argc, char **argv, int stdout_fd, int stderr_fd, BOO
     static dispatch_queue_t notifAuthQueue = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        notifAuthQueue = dispatch_queue_create("com.openminis.notification.auth", DISPATCH_QUEUE_SERIAL);
+        notifAuthQueue = dispatch_queue_create("com.ly.minis.notification.auth", DISPATCH_QUEUE_SERIAL);
     });
 
     __block BOOL granted = NO;
