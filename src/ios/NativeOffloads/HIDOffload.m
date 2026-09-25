@@ -27,6 +27,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <dlfcn.h>
 #import <mach/mach_time.h>
+#import <mach-o/dyld.h>
 #import <stdlib.h>
 #import <unistd.h>
 #import "NativeOffloadUtils.h"
@@ -182,64 +183,166 @@ static void ly_cmd_v(void) {
     ly_key(0xE3, NO);
 }
 
-// ── 全屏截图 ──
-static NSString *ly_screen_write_png(NSString *path) {
-    void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
-    // IOSurface 是独立 framework，且本工程并没有链接它 ——
-    // 必须先显式 dlopen，否则 RTLD_DEFAULT 里根本找不到这些符号。
-    void *is = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
-    void *h_cg = cg ? cg : RTLD_DEFAULT;
-    void *h_is = is ? is : RTLD_DEFAULT;
-    fn_render_display p_render =
-        (fn_render_display)dlsym(h_cg, "CARenderServerRenderDisplay");
-    fn_iosurface_create p_create_surf = (fn_iosurface_create)dlsym(h_is, "IOSurfaceCreate");
-    fn_iosurface_lock   p_lock        = (fn_iosurface_lock)dlsym(h_is, "IOSurfaceLock");
-    fn_iosurface_base   p_base        = (fn_iosurface_base)dlsym(h_is, "IOSurfaceGetBaseAddress");
+// ══════════════════════════════════════════════════════════════════
+//  全屏截图 —— 多策略
+//
+//  实测：CARenderServerRenderDisplay 这条路在本机(iOS 16.6.1)上
+//  dlsym 就取不到符号（probe 里 screen_capture=0）。
+//  所以这里改成多策略依次尝试，并让 probe 报告哪一种可用。
+//
+//  S1  _UICreateScreenUIImage()   UIKit 私有函数，直接返回整屏 UIImage。
+//      历史最久、最常用，不依赖 IOSurface 手工管理。
+//  S2  CARenderServerRenderDisplay + IOSurface  经典路径，需要
+//      com.apple.private.coregraphics / iosurface 生效。
+// ══════════════════════════════════════════════════════════════════
 
-    if (!p_render || !p_create_surf || !p_lock || !p_base) {
-        return [NSString stringWithFormat:@"screenshot unavailable: render=%p create=%p lock=%p base=%p",
-                (void *)p_render, (void *)p_create_surf, (void *)p_lock, (void *)p_base];
+typedef UIImage *(*fn_create_screen_uiimage)(void);
+
+/// 记录上次"全镜像搜索"命中的库名（供 probe 报告）
+static NSString *g_lastSymImage = nil;
+
+/// 暴力遍历所有已加载镜像找符号。
+/// 有些私有符号（如 CARenderServerRenderDisplay）不一定出现在
+/// RTLD_DEFAULT 的全局命名空间里，也不一定由 CoreGraphics 导出，
+/// 所以这里把所有 image 都过一遍，并记录究竟是哪个库提供的。
+static void *ly_sym_anywhere(const char *name) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const struct mach_header *h = _dyld_get_image_header(i);
+        if (!h) continue;
+        void *p = dlsym((void *)h, name);
+        if (p) {
+            const char *nm = _dyld_get_image_name(i);
+            if (nm) g_lastSymImage = [NSString stringWithUTF8String:nm];
+            return p;
+        }
     }
+    return NULL;
+}
+
+/// 从主可执行文件 + 显式 dlopen 的句柄 + 全镜像 里依次尝试取符号
+static void *ly_sym(const char *name, void *h1, void *h2) {
+    void *p = NULL;
+    if (h1) p = dlsym(h1, name);
+    if (!p) p = dlsym(RTLD_DEFAULT, name);
+    if (!p && h2) p = dlsym(h2, name);
+    if (!p) p = ly_sym_anywhere(name);
+    return p;
+}
+
+/// 判断一张图是不是全黑（全黑说明截到了但没内容，通常是权限问题）
+static BOOL ly_image_is_mostly_black(UIImage *img) {
+    if (!img) return YES;
+    CGImageRef cg = img.CGImage;
+    if (!cg) return YES;
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    if (!w || !h) return YES;
+    // 采样一个 16x16 网格，避免整图解码
+    size_t gw = 16, gh = 16;
+    unsigned char buf[16 * 16 * 4] = {0};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, gw, gh, 8, gw * 4, cs,
+        (CGBitmapInfo)(kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast));
+    CGColorSpaceRelease(cs);
+    if (!ctx) return YES;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, gw, gh), cg);
+    CGContextRelease(ctx);
+    unsigned long sum = 0;
+    for (size_t i = 0; i < gw * gh; i++) {
+        sum += buf[i*4] + buf[i*4+1] + buf[i*4+2];
+    }
+    double mean = (double)sum / (double)(gw * gh * 3);
+    return mean < 3.0;   // 几乎全黑
+}
+
+/// S1: _UICreateScreenUIImage
+static UIImage *ly_capture_uiimage(void) {
+    static fn_create_screen_uiimage p = NULL;
+    static BOOL probed = NO;
+    if (!probed) {
+        probed = YES;
+        // 有的系统上符号带下划线前缀的变体，逐个试
+        p = (fn_create_screen_uiimage)ly_sym("_UICreateScreenUIImage", NULL, NULL);
+        if (!p) p = (fn_create_screen_uiimage)ly_sym("UIGraphicsCreateScreenUIImage", NULL, NULL);
+    }
+    if (!p) return nil;
+    // UIKit 截图 API 应在主线程调用；用带超时的变体避免
+    // 主线程被长时间占用触发 8BADF00D watchdog。
+    BOOL timedOut = NO;
+    __block UIImage *img = nil;
+    id r = noff_dispatch_main_sync_timeout(3.0, &timedOut, ^id{
+        UIImage *u = nil;
+        u = p();
+        return u;
+    });
+    if (!timedOut) img = (UIImage *)r;
+    return img;
+}
+
+/// S2: CARenderServerRenderDisplay + IOSurface
+static UIImage *ly_capture_render(void) {
+    void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+    void *is = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+    if (!is) is = dlopen("/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+    fn_render_display  p_render = (fn_render_display) ly_sym("CARenderServerRenderDisplay", cg, NULL);
+    fn_iosurface_create p_create = (fn_iosurface_create)ly_sym("IOSurfaceCreate", is, NULL);
+    fn_iosurface_lock   p_lock   = (fn_iosurface_lock)  ly_sym("IOSurfaceLock", is, NULL);
+    fn_iosurface_base   p_base   = (fn_iosurface_base)  ly_sym("IOSurfaceGetBaseAddress", is, NULL);
+    if (!p_render || !p_create || !p_lock || !p_base) return nil;
 
     CGSize sz = [UIScreen mainScreen].bounds.size;
-    int w = (int)sz.width, h = (int)sz.height;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    int w = (int)(sz.width * scale), h = (int)(sz.height * scale);
+    if (w <= 0 || h <= 0) return nil;
 
     NSDictionary *props = @{
         @"IOSurfaceWidth": @(w), @"IOSurfaceHeight": @(h),
         @"IOSurfaceBytesPerElement": @(4), @"IOSurfaceBytesPerRow": @(w * 4),
-        @"IOSurfacePixelFormat": @(0x42475241),   // 'BGRA'
+        @"IOSurfacePixelFormat": @(0x42475241),
         @"IOSurfaceAllocSize": @(w * h * 4),
     };
     __block void *surf = NULL;
-    noff_try_objc(^{ surf = p_create_surf((__bridge CFDictionaryRef)props); });
-    if (!surf) return @"IOSurfaceCreate failed (entitlement com.apple.private.iosurface?)";
+    noff_try_objc(^{ surf = p_create((__bridge CFDictionaryRef)props); });
+    if (!surf) return nil;
 
     uint32_t seed = 0;
-    (void)p_lock(surf, 0, &seed);   // 加锁失败不影响渲染，忽略返回值
-
+    (void)p_lock(surf, 0, &seed);
     __block int rendered = -1;
-    noff_try_objc(^{ rendered = p_render(0, CFSTR("LCD"), surf, 0, 0); });
-
-    if (rendered != 0) {
-        return [NSString stringWithFormat:@"CARenderServerRenderDisplay returned %d", rendered];
-    }
+    BOOL timedOut2 = NO;
+    noff_dispatch_main_sync_timeout(3.0, &timedOut2, ^id{
+        rendered = p_render(0, CFSTR("LCD"), surf, 0, 0);
+        return nil;
+    });
+    if (timedOut2 || rendered != 0) return nil;
 
     void *base = p_base(surf);
-    if (!base) return @"IOSurface base address NULL";
-
+    if (!base) return nil;
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGBitmapInfo bmpInfo = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
-    CGContextRef ctx = CGBitmapContextCreate(base, w, h, 8, w * 4, cs, bmpInfo);
+    CGBitmapInfo bi = (CGBitmapInfo)(kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    CGContextRef ctx = CGBitmapContextCreate(base, w, h, 8, w * 4, cs, bi);
     CGColorSpaceRelease(cs);
-    if (!ctx) return @"CGBitmapContextCreate failed";
-    CGImageRef img = CGBitmapContextCreateImage(ctx);
+    if (!ctx) return nil;
+    CGImageRef cgimg = CGBitmapContextCreateImage(ctx);
     CGContextRelease(ctx);
-    if (!img) return @"CGBitmapContextCreateImage failed";
+    if (!cgimg) return nil;
+    UIImage *img = [UIImage imageWithCGImage:cgimg];
+    CGImageRelease(cgimg);
+    return img;
+}
 
-    NSData *png = UIImagePNGRepresentation([UIImage imageWithCGImage:img]);
-    CGImageRelease(img);
+/// 统一入口：返回 (image, strategyName)
+static UIImage *ly_capture_screen(NSString **strategy) {
+    UIImage *img = ly_capture_uiimage();
+    if (img) { if (strategy) *strategy = @"uiimage"; return img; }
+    img = ly_capture_render();
+    if (img) { if (strategy) *strategy = @"render"; return img; }
+    if (strategy) *strategy = @"none";
+    return nil;
+}
+
+static NSString *ly_write_png(UIImage *img, NSString *path) {
+    NSData *png = UIImagePNGRepresentation(img);
     if (!png) return @"PNG encode failed";
-
     NSString *dir = [path stringByDeletingLastPathComponent];
     if (dir.length) {
         NSError *we = nil;
@@ -249,7 +352,21 @@ static NSString *ly_screen_write_png(NSString *path) {
     if (![png writeToFile:path atomically:YES]) {
         return [NSString stringWithFormat:@"write failed: %@", path];
     }
-    return nil;   // nil = 成功
+    return nil;
+}
+
+static NSString *ly_screen_write_png(NSString *path) {
+    NSString *strat = nil;
+    UIImage *img = ly_capture_screen(&strat);
+    if (!img) {
+        return @"screenshot unavailable: 所有策略都失败（_UICreateScreenUIImage / CARenderServerRenderDisplay）";
+    }
+    if (ly_image_is_mostly_black(img)) {
+        return [NSString stringWithFormat:
+                @"screenshot all-black (strategy=%@) —— 取到图了但没内容，通常是权限不足", strat];
+    }
+    NSString *err = ly_write_png(img, path);
+    return err;
 }
 
 // ── 帮助 ──
@@ -298,17 +415,66 @@ static int hid_handler(int argc, char **argv,
     if (!sub || [sub isEqualToString:@"probe"]) {
         BOOL ok = ly_hid_bootstrap();
         BOOL kbd = (p_kbd != NULL);
+
+        // ── 截图能力逐项检测 ──
         void *cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
         void *is = dlopen("/System/Library/Frameworks/IOSurface.framework/IOSurface", RTLD_NOW);
-        BOOL render = dlsym(cg ? cg : RTLD_DEFAULT, "CARenderServerRenderDisplay") != NULL;
-        BOOL surf = dlsym(is ? is : RTLD_DEFAULT, "IOSurfaceCreate") != NULL;
+        if (!is) is = dlopen("/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface", RTLD_NOW);
+        g_lastSymImage = nil;
+        BOOL sym_uiimage = ly_sym("_UICreateScreenUIImage", NULL, NULL) != NULL;
+        NSString *uiimageFrom = g_lastSymImage;
+        g_lastSymImage = nil;
+        BOOL sym_render  = ly_sym("CARenderServerRenderDisplay", cg, NULL) != NULL;
+        NSString *renderFrom = g_lastSymImage;
+        g_lastSymImage = nil;
+        BOOL sym_surface = ly_sym("IOSurfaceCreate", is, NULL) != NULL;
+        NSString *surfaceFrom = g_lastSymImage;
+        g_lastSymImage = nil;
+
+        // 实际试一次：拿到图 + 判断是否全黑
+        NSString *strat = nil;
+        NSString *captureNote = @"not attempted";
+        BOOL captureOk = NO, nonBlack = NO;
+        if (ok) {   // 只在能有 UI 上下文时试
+            UIImage *img = ly_capture_screen(&strat);
+            if (img) {
+                captureOk = YES;
+                nonBlack = !ly_image_is_mostly_black(img);
+                CGSize px = CGSizeMake(CGImageGetWidth(img.CGImage), CGImageGetHeight(img.CGImage));
+                captureNote = [NSString stringWithFormat:@"%@ px=%.0fx%.0f %@",
+                               strat, px.width, px.height, nonBlack ? @"non-black" : @"ALL-BLACK"];
+            } else {
+                captureNote = @"all strategies failed";
+            }
+        }
+
+        // ── 辅助功能(AX)可用性探测：为后续"读 UI 树"做准备 ──
+        void *ax = dlopen("/System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities", RTLD_NOW);
+        BOOL ax_create_app = ly_sym("AXUIElementCreateApplication", ax, NULL) != NULL;
+        BOOL ax_copy_attr  = ly_sym("AXUIElementCopyAttributeValue", ax, NULL) != NULL;
+
         NSDictionary *data = @{
             @"hid_client_ok": @(ok),
             @"reason": ly_hid_reason(),
             @"touch_injection": @(ok),
             @"keyboard_injection": @(kbd),
-            @"screen_capture": @(render && surf),
             @"iokit_loaded": @(g_iokit != NULL),
+
+            @"screenshot_symbol_uiimage": @(sym_uiimage),
+            @"screenshot_symbol_render":  @(sym_render),
+            @"screenshot_symbol_iosurface": @(sym_surface),
+            @"sym_image_uiimage": uiimageFrom ? uiimageFrom.lastPathComponent : @"(not found)",
+            @"sym_image_render":  renderFrom ? renderFrom.lastPathComponent : @"(not found)",
+            @"sym_image_iosurface": surfaceFrom ? surfaceFrom.lastPathComponent : @"(not found)",
+            @"dyld_image_count": @(_dyld_image_count()),
+            @"screenshot_capture_ok": @(captureOk),
+            @"screenshot_non_black": @(nonBlack),
+            @"screenshot_strategy": strat ?: @"none",
+            @"screenshot_note": captureNote,
+            @"screen_capture": @(captureOk && nonBlack),
+
+            @"ax_available": @(ax_create_app && ax_copy_attr),
+
             @"note": ok ? @"ready" : @"touch injection unavailable — check TrollStore entitlements",
         };
         noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, @"probe", data), compact, quiet);
